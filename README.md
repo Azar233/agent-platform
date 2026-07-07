@@ -111,6 +111,16 @@ MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 ```
 
+执行数据库迁移（首次或模型变更后）：
+
+```bash
+# 生成迁移脚本
+alembic revision --autogenerate -m "init: create tables"
+
+# 执行迁移
+alembic upgrade head
+```
+
 启动后端服务：
 
 ```bash
@@ -155,6 +165,8 @@ agent-platform/
 │   ├── requirements.txt        # Python 依赖
 │   ├── .env                    # 环境变量（不提交 Git）
 │   ├── .env.example            # 环境变量模板（提交 Git）
+│   ├── alembic.ini             # Alembic 配置
+│   ├── alembic/                # 数据库迁移脚本
 │   └── app/
 │       ├── api/                # API 路由
 │       ├── config/             # 配置管理
@@ -201,6 +213,8 @@ docker compose exec postgres psql -U my_admin -d my_agent -c "SELECT version();"
 
 ## 环境验证清单
 
+### 基础环境
+
 ```bash
 git --version                  # ✅ git version 2.x.x
 python --version               # ✅ Python 3.10+
@@ -208,6 +222,37 @@ node --version                 # ✅ v18+
 docker --version               # ✅ Docker version 24.0+
 docker compose version         # ✅ Docker Compose v2.x+
 docker compose ps              # ✅ 所有服务状态为 Up / healthy
+```
+
+### API 接口验证（PowerShell）
+
+```powershell
+# 1. 健康检查
+Invoke-RestMethod -Uri http://localhost:8000/api/health
+# 预期：{"status":"healthy","app_name":"My Agent Platform","version":"0.1.0"}
+
+# 2. 注册用户
+$body = @{username="verify_user";email="verify@test.com";password="123456"} | ConvertTo-Json; Invoke-RestMethod -Method Post -Uri http://localhost:8000/api/auth/register -ContentType "application/json" -Body $body
+# 预期：返回 201，包含用户信息
+
+# 3. 登录获取 Token
+$body = @{username="verify_user";password="123456"} | ConvertTo-Json; $resp = Invoke-RestMethod -Method Post -Uri http://localhost:8000/api/auth/login -ContentType "application/json" -Body $body; $resp.access_token
+# 预期：输出 access_token 字符串
+
+# 4. 用 Token 获取当前用户信息（用上一步输出的 Token 替换 YOUR_TOKEN）
+Invoke-RestMethod -Uri http://localhost:8000/api/auth/me -Headers @{"Authorization"="Bearer YOUR_TOKEN"}
+# 预期：返回当前用户信息
+```
+
+### 服务连通验证
+
+```bash
+# 验证 Redis
+docker compose exec redis redis-cli ping
+# 期望：PONG
+
+# 验证 MinIO — 浏览器访问 http://localhost:9001
+# 用户名：minioadmin  密码：minioadmin
 ```
 
 全部通过后，开发环境即搭建完成 🎉
