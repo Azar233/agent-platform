@@ -3,7 +3,7 @@
     <!-- 左侧：Logo + 平台名称 -->
     <div class="header-left">
       <img src="/favicon.svg" alt="logo" class="header-logo" />
-      <span class="header-title">My Agent Platform</span>
+      <span class="header-title">VisionPay Agent Platform</span>
     </div>
     <!-- 右侧：用户信息 + 退出按钮 -->
     <div class="header-right">
