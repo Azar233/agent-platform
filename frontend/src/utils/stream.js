@@ -28,7 +28,7 @@
 export function streamChat(url, body, callbacks) {
   const { onMessage, onDone, onError } = callbacks
   // 从 localStorage 获取 Token
-  const token = localStorage.getItem('my_agent_token')
+  const token = localStorage.getItem('vp_agent_token')
 
   // 使用 fetch + ReadableStream 实现 SSE
   const controller = new AbortController()

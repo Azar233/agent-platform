@@ -1,6 +1,11 @@
-# My Agent Platform
+# VisionPay Agent Platform
 
-基于 YOLOv11 的目标检测智能体平台，融合 LangChain/LangGraph 智能体框架与 YOLOv11 目标检测模型，提供遥感目标检测能力。
+基于 YOLOv11 的零售商品自动结账智能体平台（ACO）。融合 LangChain/LangGraph 智能体框架与 YOLOv11 目标检测模型，依托 Retail Product Checkout Dataset 提供的细粒度图像数据，实现收银台多商品堆叠场景下的自动定位、精准品类识别与购物结算清单生成。
+
+**核心能力：**
+- 🔍 **商品定位** — 输入收银台真实多商品堆叠图像，自动定位图像中每个商品
+- 🏷️ **品类识别** — 精准识别商品的细分品类（种类繁多、外观相似、相互遮挡）
+- 🧾 **自动结算** — 生成最终购物结算清单，实现高效准确的自动化结算
 
 ## 技术栈
 
@@ -97,10 +102,10 @@ cp .env.example .env
 # 数据库
 DB_HOST=localhost
 DB_PORT=5432
-DB_NAME=my_agent
-DB_USER=my_admin
-DB_PASSWORD=my_admin
-DATABASE_URL=postgresql://my_admin:my_admin@localhost:5432/my_agent
+DB_NAME=vp_agent
+DB_USER=vp_admin
+DB_PASSWORD=vp_admin
+DATABASE_URL=postgresql://vp_admin:vp_admin@localhost:5432/vp_agent
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
@@ -158,7 +163,7 @@ cp .env.example .env
 VITE_API_BASE_URL=http://localhost:8000
 
 # 应用名称
-VITE_APP_TITLE=My Agent Platform
+VITE_APP_TITLE=VisionPay Agent Platform
 
 # MinIO 文件访问地址
 VITE_MINIO_URL=http://localhost:9000
@@ -316,7 +321,7 @@ docker compose exec redis redis-cli ping
 # 期望：PONG
 
 # 验证 PostgreSQL
-docker compose exec postgres psql -U my_admin -d my_agent -c "SELECT version();"
+docker compose exec postgres psql -U vp_admin -d vp_agent -c "SELECT version();"
 
 # 验证 MinIO — 浏览器访问 http://localhost:9001 （见下方 MinIO Console 链接）
 ```
@@ -341,7 +346,7 @@ docker compose ps              # ✅ 所有服务状态为 Up / healthy
 ```powershell
 # 1. 基础健康检查
 Invoke-RestMethod -Uri http://localhost:8000/api/health
-# 预期：{"status":"healthy","app_name":"My Agent Platform","version":"0.1.0"}
+# 预期：{"status":"healthy","app_name":"VisionPay Agent Platform","version":"0.1.0"}
 
 # 2. 详细健康检查（数据库 + Redis + MinIO 连通性）
 Invoke-RestMethod -Uri http://localhost:8000/api/health/detail

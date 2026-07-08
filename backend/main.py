@@ -35,9 +35,9 @@ async def lifespan(_app: FastAPI):
 
 # 创建 FastAPI 实例
 app = FastAPI(
-    title="My Agent Platform",
+    title="VisionPay Agent Platform",
     version="0.1.0",
-    description="基于 YOLOv11 的目标检测智能体平台 API",
+    description="基于 YOLOv11 的零售商品自动结账智能体平台 API（ACO）",
     docs_url="/docs",
     redoc_url="/redoc",
     swagger_ui_js_url="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
@@ -70,7 +70,7 @@ app.include_router(health_router)
 @app.get("/")
 def root():
     return {
-        "message": "欢迎使用 My Agent Platform",
+        "message": "欢迎使用 VisionPay Agent Platform",
         "version": "0.1.0",
         "docs": "/docs",
         "redoc": "/redoc",
