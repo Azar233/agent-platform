@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     """应用全局配置"""
 
     # ── 应用基础配置 ──────────────────────────────────
-    APP_NAME: str = "My Agent Platform"
+    APP_NAME: str = "Vision Pay"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     # ── 数据库配置 ────────────────────────────────────
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
-    DB_NAME: str = "my_agent"
-    DB_USER: str = "my_admin"
-    DB_PASSWORD: str = "my_admin"
+    DB_NAME: str = "vp_agent"
+    DB_USER: str = "vp_admin"
+    DB_PASSWORD: str = "vp_admin"
 
     @property
     def DATABASE_URL(self) -> str:
@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     LOG_DIR: str = "logs"  # 日志目录(相对于 backend/)
     LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 单文件最大 10MB
     LOG_BACKUP_COUNT: int = 5  # 保留 5 份历史日志
+
+    # ── 训练配置 ──────────────────────────────────────
+    TRAIN_OUTPUT_DIR: str = "runs/train"
+    DATASET_BASE_DIR: str = "datasets"
+    YOLO_CONFIG_DIR: str = ".ultralytics"
 
     # ── Redis 配置 ────────────────────────────────────
     REDIS_HOST: str = "localhost"
