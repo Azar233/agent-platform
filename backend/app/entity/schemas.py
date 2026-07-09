@@ -179,8 +179,10 @@ class DetectionTaskResponse(ProjectBaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
 
 
 class DetectionResultResponse(ProjectBaseModel):
@@ -242,6 +244,10 @@ class TrainingTaskCreate(ProjectBaseModel):
     dataset_path: Optional[str] = Field(None, description="数据集目录，默认 datasets/vision_pay")
     data_yaml: Optional[str] = Field(None, description="data.yaml 路径，默认在数据集目录下查找")
 
+    model_config = {
+        "protected_namespaces": (),
+    }
+
 
 class TrainingTaskResponse(ProjectBaseModel):
     """训练任务响应"""
@@ -264,8 +270,10 @@ class TrainingTaskResponse(ProjectBaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
 
 
 class TrainingMetricResponse(ProjectBaseModel):
@@ -296,8 +304,10 @@ class ModelVersionBrief(ProjectBaseModel):
     is_default: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
 
 
 class ModelVersionResponse(ProjectBaseModel):
@@ -322,8 +332,10 @@ class ModelVersionResponse(ProjectBaseModel):
     is_default: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
 
 
 class ModelVersionCreate(ProjectBaseModel):
@@ -333,6 +345,10 @@ class ModelVersionCreate(ProjectBaseModel):
     model_name: str = Field(..., description="模型名称")
     model_type: str = Field(default="yolov11n", description="模型类型")
     description: Optional[str] = None
+
+    model_config = {
+        "protected_namespaces": (),
+    }
 
 
 # ══════════════════════════════════════════════════════════════

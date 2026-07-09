@@ -5,8 +5,8 @@
 import { defineStore } from 'pinia'
 import { loginApi, getUserInfoApi } from '@/api/auth'
 
-const TOKEN_KEY = 'my_agent_token'
-const USER_KEY = 'my_agent_user'
+const TOKEN_KEY = 'vp_agent_token'
+const USER_KEY = 'vp_agent_user'
 
 export const useUserStore = defineStore('user', {
   state: () => ({

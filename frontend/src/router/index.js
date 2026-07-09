@@ -76,11 +76,11 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   // 设置页面标题
   document.title = to.meta.title
-    ? `${to.meta.title} - My Agent Platform`
-    : 'My Agent Platform'
+    ? `${to.meta.title} - VisionPay Agent Platform`
+    : 'VisionPay Agent Platform'
 
   // 检查是否需要认证
-  const token = localStorage.getItem('my_agent_token')
+  const token = localStorage.getItem('vp_agent_token')
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false)
 
   if (requiresAuth && !token) {
