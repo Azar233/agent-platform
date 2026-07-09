@@ -67,6 +67,7 @@ checkpoints/
 # YOLOv11 特定
 runs/
 ultralytics/
+backend/.ultralytics/
 
 # ── 日志文件 ───────────────────────────────────────
 *.log

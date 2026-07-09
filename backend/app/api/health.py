@@ -16,7 +16,7 @@ async def health_check():
         "data": {
             "status": "healthy",
             # 如果你的 settings 中没有 APP_NAME 和 APP_VERSION，可以直接写死字符串
-            "app_name": getattr(settings, "APP_NAME", "VisionPay Agent Platform"),
+            "app_name": getattr(settings, "APP_NAME", "Vision Pay"),
             "version": getattr(settings, "APP_VERSION", "0.1.0"),
         },
     }
@@ -80,7 +80,7 @@ async def health_check_detail():
         "message": "ok",
         "data": {
             "status": "healthy" if all_healthy else "degraded",
-            "app_name": getattr(settings, "APP_NAME", "VisionPay Agent Platform"),
+            "app_name": getattr(settings, "APP_NAME", "Vision Pay"),
             "version": getattr(settings, "APP_VERSION", "0.1.0"),
             "services": services,
         },
