@@ -3,8 +3,8 @@
     <div class="login-card">
       <div class="login-header">
         <img src="/favicon.svg" alt="logo" class="login-logo" />
-        <h2>My Agent Platform</h2>
-        <p>基于 YOLOv11 的目标检测智能体平台</p>
+        <h2>VisionPay Agent Platform</h2>
+        <p>基于 YOLOv11 的零售商品自动结账智能体平台</p>
       </div>
       <el-form
         ref="formRef"
