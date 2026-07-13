@@ -61,4 +61,10 @@ function toggleSidebar() {
     gap: 10px;
   }
 }
+
+@media (max-width: 640px) {
+  .layout-content {
+    padding-bottom: 64px;
+  }
+}
 </style>

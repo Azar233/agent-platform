@@ -1,5 +1,5 @@
 <template>
-  <div class="workspace" @dragover.prevent @drop.prevent="handleDrop">
+  <div :class="['workspace', { 'params-open': paramsVisible }]" @dragover.prevent @drop.prevent="handleDrop">
     <header class="workspace-header">
       <div>
         <span class="kicker">VISIONPAY / RETAIL VISION</span>
@@ -9,6 +9,24 @@
         <span :class="['agent-status', { ready: agentStatus.configured }]">
           <i></i>{{ agentStatus.configured ? agentStatus.model : 'Agent 未配置' }}
         </span>
+        <el-dropdown class="mobile-session-dropdown" popper-class="mobile-session-menu" trigger="click" @command="handleSessionCommand">
+          <el-button :icon="ChatLineSquare" circle />
+          <template #dropdown>
+            <el-dropdown-item command="new">+ 新对话</el-dropdown-item>
+            <el-dropdown-item v-if="agentStore.sessions.length" divided />
+            <el-dropdown-item
+              v-for="session in agentStore.sessions"
+              :key="session.session_uuid"
+              :command="session.session_uuid"
+              :class="{ active: session.session_uuid === agentStore.currentSessionId }"
+            >
+              {{ session.title }}
+            </el-dropdown-item>
+          </template>
+        </el-dropdown>
+        <el-tooltip content="调整参数" placement="bottom">
+          <el-button class="mobile-params-toggle" :icon="Operation" circle @click="paramsVisible = !paramsVisible" />
+        </el-tooltip>
         <el-tooltip content="创建新对话" placement="bottom">
           <el-button :icon="Plus" circle @click="resetWorkspace" />
         </el-tooltip>
@@ -45,7 +63,7 @@
       </aside>
 
       <main class="conversation-panel">
-        <div ref="messageListRef" class="message-list">
+        <div ref="messageListRef" class="message-list" @scroll="onMessageScroll">
           <section v-if="!agentStore.messages.length" class="empty-state">
             <div class="empty-mark"><el-icon><View /></el-icon></div>
             <h2>商品识别 Agent</h2>
@@ -71,6 +89,10 @@
             </div>
           </article>
         </div>
+
+        <button v-show="showScrollButton" type="button" class="scroll-bottom-btn" aria-label="回到底部" @click="scrollBottom">
+          <el-icon><Bottom /></el-icon>
+        </button>
 
         <footer class="composer">
           <div v-if="selectedFiles.length" class="selected-files">
@@ -135,7 +157,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Aim, ChatLineSquare, Close, Cpu, Delete, Document, Files, Folder, FolderOpened, Operation, Paperclip, Picture, Plus, Promotion, QuestionFilled, Refresh, UploadFilled, User, VideoPause, View } from '@element-plus/icons-vue'
+import { Aim, Bottom, ChatLineSquare, Close, Cpu, Delete, Document, Files, Folder, FolderOpened, Operation, Paperclip, Picture, Plus, Promotion, QuestionFilled, Refresh, UploadFilled, User, VideoPause, View } from '@element-plus/icons-vue'
 import DetectionResultCard from '@/components/DetectionResultCard.vue'
 import { createDetectionSessionApi, deleteDetectionSessionApi, detectBatchApi, detectSingleApi, detectZipApi, getAgentStatusApi, getDetectionSessionApi, getDetectionSessionsApi, saveDetectionExchangeApi, uploadChatFilesApi } from '@/api/detection'
 import { useAgentStore } from '@/stores/agent'
@@ -157,6 +179,8 @@ const agentStatus = ref({ configured: false, model: 'DeepSeek' })
 const latestResult = ref(null)
 const inputMode = ref('single')
 const sessionLoading = ref(false)
+const paramsVisible = ref(false)
+const showScrollButton = ref(false)
 const busy = computed(() => directLoading.value || agentStore.isLoading)
 const canSend = computed(() => inputText.value.trim() || selectedFiles.value.length)
 const modeCopy = computed(() => ({
@@ -173,7 +197,7 @@ onMounted(async () => {
   } else if (agentStore.sessions.length) {
     await openSession(agentStore.sessions[0].session_uuid)
   } else {
-    createNewChat()
+    await createNewChat()
   }
 })
 onBeforeUnmount(() => { stopStream(); clearSelectedFiles() })
@@ -192,7 +216,22 @@ async function ensureSession() {
   agentStore.currentSessionId = session.session_uuid
   return session.session_uuid
 }
-function createNewChat() {
+async function createNewChat(needConfirm = false) {
+  // [交互优化] 仅当用户主动点击“新建对话”时才确认；
+  // 删除会话后自动新建、或无会话时初始化，不需要二次确认。
+  if (needConfirm && busy.value) {
+    try {
+      await ElMessageBox.confirm(
+        '当前正在生成回复，新建对话将停止当前响应。是否继续？',
+        '新建对话',
+        { confirmButtonText: '继续', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      // 用户点击取消，保留当前任务
+      return
+    }
+  }
+
   stopStream()
   agentStore.currentSessionId = null
   agentStore.messages = []
@@ -200,8 +239,26 @@ function createNewChat() {
   inputText.value = ''
   clearSelectedFiles()
 }
-async function openSession(sessionUuid) {
-  if (busy.value || sessionUuid === agentStore.currentSessionId && agentStore.messages.length) return
+async function openSession(sessionUuid, skipConfirm = false) {
+  // 已经是当前会话且有消息时，无需切换
+  if (sessionUuid === agentStore.currentSessionId && agentStore.messages.length) return
+
+  // [交互优化] 当前有任务在进行时（流式回复 / 直接识别），先弹窗确认是否切换。
+  // 避免用户误操作导致响应被中断；取消则留在当前会话继续等待。
+  // skipConfirm 为 true 时跳过确认，例如删除当前会话后自动切换到其他会话的场景。
+  if (!skipConfirm && busy.value) {
+    try {
+      await ElMessageBox.confirm(
+        '当前正在生成回复，切换会话将停止当前响应。是否继续？',
+        '切换会话',
+        { confirmButtonText: '继续切换', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      // 用户点击取消，直接返回，不切换
+      return
+    }
+  }
+
   stopStream()
   sessionLoading.value = true
   try {
@@ -220,10 +277,16 @@ async function removeSession(session) {
     if (agentStore.currentSessionId === session.session_uuid) {
       agentStore.currentSessionId = null
       agentStore.messages = []
-      if (agentStore.sessions.length) await openSession(agentStore.sessions[0].session_uuid)
-      else createNewChat()
+      // 删除当前会话后自动切换到下一个会话，这里已经过一次确认，跳过二次确认
+      if (agentStore.sessions.length) await openSession(agentStore.sessions[0].session_uuid, true)
+      else await createNewChat()
     }
   } catch (error) { if (error !== 'cancel' && error !== 'close') throw error }
+}
+function onMessageScroll() {
+  const el = messageListRef.value
+  if (!el) return
+  showScrollButton.value = el.scrollTop + el.clientHeight < el.scrollHeight - 120
 }
 function formatSessionTime(value) {
   if (!value) return ''
@@ -306,12 +369,23 @@ async function sendToAgent() {
   } catch (error) { assistant.content = error.message || '附件上传失败'; assistant.loading = false; agentStore.setLoading(false) }
 }
 function stopStream() { agentStore.abort(); const last = agentStore.messages.at(-1); if (last?.role === 'assistant') { last.loading = false; last.tool = ''; if (!last.content) last.content = '已停止本次响应。' } }
-function resetWorkspace() { createNewChat() }
+async function resetWorkspace() {
+  // 用户点击标题栏“+”按钮，需要确认是否会中断当前任务
+  await createNewChat(true)
+}
+function handleSessionCommand(command) {
+  if (command === 'new') {
+    // 下拉菜单里的“新对话”与标题栏“+”按钮等价，需要确认是否会中断当前任务
+    createNewChat(true)
+  } else {
+    openSession(command)
+  }
+}
 </script>
 
 <style lang="scss" scoped>
 .workspace { height: 100%; min-height: 620px; display: flex; flex-direction: column; color: $text-primary; background: $bg-color; }
-.workspace-header { min-height: 78px; padding: 14px 22px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid $border-color; border-radius: $border-radius-md $border-radius-md 0 0; background: $surface-color; box-shadow: $shadow-sm; }.workspace-header h1 { margin: 5px 0 0; font-family: 'Space Grotesk', 'DM Sans', sans-serif; font-size: 24px; line-height: 1.16; letter-spacing: 0; }.kicker { font-size: 11px; color: $primary-color; font-weight: 800; letter-spacing: 0.06em; }.header-actions { display: flex; align-items: center; gap: 10px; }.agent-status { display: flex; align-items: center; gap: 7px; font-size: 12px; color: $danger-color; font-weight: 700; }.agent-status i { width: 7px; height: 7px; border-radius: 50%; background: $danger-color; }.agent-status.ready { color: $success-color; }.agent-status.ready i { background: $success-color; box-shadow: 0 0 0 4px rgba(16, 185, 129, .12); }
+.workspace-header { min-height: 78px; padding: 14px 22px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid $border-color; border-radius: $border-radius-md $border-radius-md 0 0; background: $surface-color; box-shadow: $shadow-sm; }.workspace-header h1 { margin: 5px 0 0; font-family: 'Space Grotesk', 'DM Sans', sans-serif; font-size: 24px; line-height: 1.16; letter-spacing: 0; }.kicker { font-size: 11px; color: $primary-color; font-weight: 800; letter-spacing: 0.06em; }.header-actions { display: flex; align-items: center; gap: 10px; }.agent-status { display: flex; align-items: center; gap: 7px; font-size: 12px; color: $danger-color; font-weight: 700; }.agent-status i { width: 7px; height: 7px; border-radius: 50%; background: $danger-color; }.agent-status.ready { color: $success-color; }.agent-status.ready i { background: $success-color; box-shadow: 0 0 0 4px rgba(16, 185, 129, .12); }.mobile-params-toggle, .mobile-session-dropdown, .scroll-bottom-btn { display: none; }
 .workspace-grid { min-height: 0; flex: 1; display: grid; grid-template-columns: 210px minmax(0, 1fr) 296px; border: 1px solid $border-color; border-top: 0; border-radius: 0 0 $border-radius-md $border-radius-md; overflow: hidden; background: $surface-color; }.conversation-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: $surface-color; }.message-list { min-height: 0; flex: 1; overflow-y: auto; padding: 28px max(22px, calc((100% - 840px) / 2)); }.empty-state { min-height: 100%; display: grid; align-content: center; justify-items: center; text-align: center; }.empty-mark { width: 58px; height: 58px; display: grid; place-items: center; border: 1px solid $border-color; border-radius: 50%; color: #fff; background: $primary-color; font-size: 25px; box-shadow: 0 16px 34px rgba(99, 102, 241, .24); }.empty-state h2 { margin: 16px 0 22px; font-family: 'Space Grotesk', 'DM Sans', sans-serif; font-size: 22px; }.starter-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 680px; }.starter-grid button { padding: 14px; border: 1px solid $border-color; border-radius: $border-radius-md; background: $surface-color; color: $text-regular; cursor: pointer; font-size: 12px; font-weight: 700; transition: border-color .2s, box-shadow .2s, transform .2s; }.starter-grid button:hover { border-color: $primary-color; color: $primary-color; background: $primary-soft; box-shadow: $ring-primary; transform: translateY(-1px); }
 .session-sidebar { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 14px 12px; border-right: 1px solid $border-color; background: $surface-muted; }.new-chat-button { width: 100%; }.session-heading { display: flex; align-items: center; justify-content: space-between; height: 38px; margin-top: 10px; padding-left: 5px; color: $text-secondary; font-size: 11px; font-weight: 800; }.session-list { min-height: 80px; flex: 1; overflow-y: auto; }.session-item { width: 100%; display: grid; grid-template-columns: 18px minmax(0, 1fr) 22px; align-items: center; gap: 8px; margin-bottom: 5px; padding: 9px 6px 9px 9px; border: 0; border-radius: $border-radius-sm; color: $text-secondary; background: transparent; text-align: left; cursor: pointer; transition: background .2s, color .2s; }.session-item:hover { background: #fff; }.session-item.active { color: $primary-color; background: $primary-soft; }.session-item > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }.session-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 700; }.session-item small { color: $text-placeholder; font-size: 9px; }.session-item i { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 3px; opacity: 0; color: $text-secondary; cursor: pointer; }.session-item:hover i, .session-item.active i { opacity: 1; }.session-item i:hover { color: $danger-color; background: #fff; }.no-sessions { padding: 22px 4px; color: $text-placeholder; text-align: center; font-size: 11px; }
 .message-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; margin-bottom: 24px; }.avatar { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: $primary-color; }.message-row.user .avatar { color: $text-primary; background: $surface-muted; }.message-label { margin-bottom: 6px; font-size: 11px; font-weight: 800; color: $text-secondary; }.message-content { line-height: 1.7; font-size: 14px; word-break: break-word; }.message-content :deep(p) { margin: 0 0 8px; }.message-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }.message-files span { display: flex; align-items: center; gap: 5px; max-width: 240px; padding: 6px 9px; border: 1px solid $border-color; border-radius: $border-radius-sm; color: $text-secondary; background: $surface-muted; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.thinking { display: flex; gap: 5px; padding: 8px 0; }.thinking span { width: 7px; height: 7px; border-radius: 50%; background: $text-secondary; animation: pulse 1.1s infinite; }.thinking span:nth-child(2) { animation-delay: .15s; }.thinking span:nth-child(3) { animation-delay: .3s; }.tool-state { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: $border-radius-sm; color: $warning-color; background: #fff7ed; font-size: 11px; font-weight: 700; }.stream-cursor { display: inline-block; width: 2px; height: 1em; margin-left: 3px; vertical-align: -2px; background: $primary-color; animation: cursor-blink .8s steps(1) infinite; }
@@ -321,5 +395,23 @@ function resetWorkspace() { createNewChat() }
 @keyframes cursor-blink { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
 @media (max-width: 1180px) { .workspace-grid { grid-template-columns: 170px minmax(0, 1fr) 250px; }.rail-section { padding: 14px; } }
 @media (max-width: 980px) { .workspace-grid { grid-template-columns: 1fr; }.session-sidebar { min-height: 150px; max-height: 190px; border-right: 0; border-bottom: 1px solid $border-color; }.session-list { display: flex; gap: 6px; overflow-x: auto; }.session-item { min-width: 170px; max-width: 210px; }.control-rail { display: grid; grid-template-columns: repeat(2, 1fr); border-left: 0; border-top: 1px solid $border-color; max-height: 300px; }.conversation-panel { min-height: 620px; }.summary-section { display: none; } }
-@media (max-width: 640px) { .workspace { min-height: 100%; }.workspace-header { padding: 10px 12px; }.workspace-header h1 { font-size: 17px; }.agent-status { display: none; }.message-list, .composer { padding-left: 12px; padding-right: 12px; }.starter-grid { grid-template-columns: 1fr; width: 100%; }.control-rail { grid-template-columns: 1fr; max-height: none; }.parameters { display: none; }.conversation-panel { min-height: 560px; } }
+@media (max-width: 640px) { .workspace { height: 100%; min-height: 100%; display: flex; flex-direction: column; }.workspace-grid { display: flex; flex-direction: column; min-height: 0; flex: 1; }.workspace-header { padding: 10px 12px; flex-shrink: 0; }.workspace-header h1 { font-size: 17px; }.header-actions { gap: 8px; }.header-actions .el-button { margin: 0; }.agent-status { display: none; }.mobile-params-toggle, .mobile-session-dropdown { display: inline-flex; }.session-sidebar { display: none; }.conversation-panel { position: relative; min-height: 0; flex: 1; }.message-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-left: 12px; padding-right: 12px; }.message-list .message-content,
+        .message-list .message-content p,
+        .message-list .message-content a,
+        .message-list .message-content code,
+        .message-list .message-content pre {
+          word-break: break-all !important;
+          overflow-wrap: break-word !important;
+          word-wrap: break-word !important;
+          white-space: normal !important;
+          hyphens: none !important;
+        }
+        .message-list .message-content pre,
+        .message-list .message-content code {
+          white-space: pre-wrap !important;
+        }.message-list .message-files span { max-width: 100%; white-space: normal; }.scroll-bottom-btn { position: absolute; right: 18px; bottom: 86px; width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid $border-color; border-radius: 50%; color: $primary-color; background: $surface-color; box-shadow: $shadow-lg; cursor: pointer; z-index: 10; }.scroll-bottom-btn .el-icon { font-size: 18px; }.composer { padding-left: 12px; padding-right: 12px; flex-shrink: 0; }.starter-grid { grid-template-columns: 1fr; width: 100%; }.control-rail { display: none; position: fixed; bottom: 64px; left: 10px; right: 10px; max-height: 66vh; border-radius: $border-radius-md $border-radius-md 0 0; border: 1px solid $border-color; border-bottom: 0; box-shadow: 0 -8px 32px rgba(0,0,0,0.22); z-index: 900; overflow-y: auto; background: $surface-color; }.workspace.params-open .control-rail { display: flex; flex-direction: column; } }
+
+:global(.mobile-session-menu) { max-width: min(420px, 82vw) !important; max-height: 70vh !important; overflow-y: auto !important; }
+:global(.mobile-session-menu .el-dropdown-menu__item) { white-space: normal !important; word-break: break-word !important; line-height: 1.45 !important; padding-top: 8px !important; padding-bottom: 8px !important; }
+:global(.mobile-session-menu .el-dropdown-menu__item.active) { color: $primary-color !important; font-weight: 800 !important; }
 </style>

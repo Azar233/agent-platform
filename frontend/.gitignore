@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# [PWA] vite-plugin-pwa 开发模式下生成的 Service Worker 临时目录
+dev-dist
 *.local
 
 # Editor directories and files

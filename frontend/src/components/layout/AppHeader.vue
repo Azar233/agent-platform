@@ -195,4 +195,10 @@ function handleCommand(command) {
     display: none;
   }
 }
+
+@media (max-width: 640px) {
+  .sidebar-toggle {
+    display: none;
+  }
+}
 </style>

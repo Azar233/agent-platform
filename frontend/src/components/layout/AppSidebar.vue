@@ -1,6 +1,8 @@
 <template>
   <aside :class="['app-sidebar', { collapsed }]">
+    <!-- 桌面端侧边栏 -->
     <el-menu
+      class="desktop-menu"
       :default-active="activeMenu"
       :router="true"
       background-color="transparent"
@@ -22,6 +24,19 @@
         </el-menu-item>
       </el-tooltip>
     </el-menu>
+
+    <!-- 手机端底部导航 -->
+    <nav class="mobile-bottom-nav">
+      <router-link
+        v-for="item in menuItems"
+        :key="item.path"
+        :to="item.path"
+        :class="['bottom-nav-item', { active: activeMenu === item.path }]"
+      >
+        <el-icon><component :is="item.icon" /></el-icon>
+        <span>{{ item.shortTitle }}</span>
+      </router-link>
+    </nav>
   </aside>
 </template>
 
@@ -53,12 +68,12 @@ const activeMenu = computed(() => {
 
 /** 侧边栏菜单配置 */
 const menuItems = [
-  { path: '/checkout', title: '顾客结算端', icon: ShoppingCart },
-  { path: '/detection', title: '检测工作台', icon: Camera },
-  { path: '/chat', title: '智能对话', icon: ChatDotRound },
-  { path: '/training', title: '模型训练', icon: Cpu },
-  { path: '/history', title: '历史记录', icon: Clock },
-  { path: '/dashboard', title: '数据看板', icon: DataAnalysis },
+  { path: '/checkout', title: '顾客结算端', shortTitle: '结算', icon: ShoppingCart },
+  { path: '/detection', title: '检测工作台', shortTitle: '检测', icon: Camera },
+  { path: '/chat', title: '智能对话', shortTitle: '对话', icon: ChatDotRound },
+  { path: '/training', title: '模型训练', shortTitle: '训练', icon: Cpu },
+  { path: '/history', title: '历史记录', shortTitle: '历史', icon: Clock },
+  { path: '/dashboard', title: '数据看板', shortTitle: '看板', icon: DataAnalysis },
 ]
 </script>
 
@@ -117,6 +132,44 @@ const menuItems = [
   }
 }
 
+.mobile-bottom-nav {
+  display: none;
+}
+
+.bottom-nav-item {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 2px;
+  color: $text-secondary;
+  text-decoration: none;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  transition: color 0.2s, background 0.2s;
+
+  .el-icon {
+    font-size: 18px;
+  }
+
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+
+  &.active {
+    color: $primary-color;
+    background: $primary-soft;
+  }
+}
+
 @media (max-width: 900px) {
   .app-sidebar {
     width: 68px;
@@ -130,6 +183,34 @@ const menuItems = [
         display: none;
       }
     }
+  }
+}
+
+@media (max-width: 640px) {
+  .app-sidebar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: 64px;
+    border-radius: 0;
+    border: 0;
+    border-top: 1px solid $border-color;
+    z-index: 1000;
+    padding: 0;
+    overflow: visible;
+    background: $surface-color;
+  }
+
+  .desktop-menu {
+    display: none;
+  }
+
+  .mobile-bottom-nav {
+    display: flex;
+    align-items: center;
+    height: 100%;
   }
 }
 </style>
