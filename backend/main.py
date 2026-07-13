@@ -6,6 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config.settings import settings
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
+from app.api.training import router as training_router
+from app.api.detection import router as detection_router
+from app.api.chat import router as chat_router
+from app.api.prices import router as prices_router
 
 from app.core.exceptions import register_exception_handlers
 from app.middleware.request_logger import RequestLogMiddleware
@@ -35,9 +39,9 @@ async def lifespan(_app: FastAPI):
 
 # 创建 FastAPI 实例
 app = FastAPI(
-    title="My Agent Platform",
+    title="VisionPay Agent Platform",
     version="0.1.0",
-    description="基于 YOLOv11 的目标检测智能体平台 API",
+    description="基于 YOLOv11 的零售商品自动结账智能体平台 API（ACO）",
     docs_url="/docs",
     redoc_url="/redoc",
     swagger_ui_js_url="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
@@ -65,12 +69,16 @@ app.add_middleware(RequestLogMiddleware)
 # ── 注册路由 ─────────────────────────────────────────
 app.include_router(auth_router)
 app.include_router(health_router)
+app.include_router(training_router)
+app.include_router(detection_router)
+app.include_router(chat_router)
+app.include_router(prices_router)
 
 
 @app.get("/")
 def root():
     return {
-        "message": "欢迎使用 My Agent Platform",
+        "message": "欢迎使用 VisionPay Agent Platform",
         "version": "0.1.0",
         "docs": "/docs",
         "redoc": "/redoc",
@@ -80,4 +88,17 @@ def root():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        reload_excludes=[
+            "../.runtime/*",
+            "logs/*",
+            "runs/*",
+            "datasets/*",
+            ".ultralytics/*",
+            "__pycache__/*",
+        ],
+    )

@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     """应用全局配置"""
 
     # ── 应用基础配置 ──────────────────────────────────
-    APP_NAME: str = "My Agent Platform"
+    APP_NAME: str = "Vision Pay"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     # ── 数据库配置 ────────────────────────────────────
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
-    DB_NAME: str = "my_agent"
-    DB_USER: str = "my_admin"
-    DB_PASSWORD: str = "my_admin"
+    DB_NAME: str = "vp_agent"
+    DB_USER: str = "vp_admin"
+    DB_PASSWORD: str = "vp_admin"
 
     @property
     def DATABASE_URL(self) -> str:
@@ -23,9 +23,29 @@ class Settings(BaseSettings):
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
     # ── 日志配置 ────────────────────────────────────
-    LOG_DIR: str = "logs"  # 日志目录(相对于 backend/)
+    LOG_DIR: str = "../.runtime/backend-logs"  # 日志目录(相对于 backend/)
     LOG_MAX_BYTES: int = 10 * 1024 * 1024  # 单文件最大 10MB
     LOG_BACKUP_COUNT: int = 5  # 保留 5 份历史日志
+    SQL_ECHO: bool = False  # 仅在需要调试 SQL 时打开
+
+    # ── 训练配置 ──────────────────────────────────────
+    TRAIN_OUTPUT_DIR: str = "runs/train"
+    DATASET_BASE_DIR: str = "datasets"
+    YOLO_CONFIG_DIR: str = ".ultralytics"
+
+    # ── 检测推理配置 ──────────────────────────────────
+    DETECTION_OUTPUT_DIR: str = "runs/detect"
+    DETECTION_UPLOAD_DIR: str = ".runtime/uploads"
+    DETECTION_MODEL_PATH: str = ""
+    DETECTION_MAX_FILE_MB: int = 20
+    DETECTION_MAX_BATCH_SIZE: int = 30
+
+    # ── DeepSeek Agent 配置（OpenAI 兼容接口）─────────
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    # DeepSeek 控制台显示的 v4 flash 模型标识可在 .env 中覆盖。
+    DEEPSEEK_MODEL: str = "deepseek-chat"
+    DEEPSEEK_TEMPERATURE: float = 0.1
 
     # ── Redis 配置 ────────────────────────────────────
     REDIS_HOST: str = "localhost"
@@ -40,7 +60,7 @@ class Settings(BaseSettings):
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
-    MINIO_BUCKET: str = "my-images"
+    MINIO_BUCKET: str = "vp-images"
     MINIO_SECURE: bool = False
 
     # ── JWT 认证配置 ──────────────────────────────────

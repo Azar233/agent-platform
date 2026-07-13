@@ -7,6 +7,7 @@
   模型管理：training_tasks, training_metrics, model_versions
   智能体：  chat_sessions, chat_messages
   系统运维：operation_logs
+  商品价格：product_prices
 """
 from datetime import datetime
 
@@ -217,7 +218,7 @@ class TrainingTask(Base):
     epochs = Column(Integer, default=100, comment="训练轮数")
     img_size = Column(Integer, default=640, comment="图像尺寸")
     batch_size = Column(Integer, default=16, comment="批次大小")
-    device = Column(String(20), default="0", comment="训练设备：0/1/cpu")
+    device = Column(String(20), default="0", comment="Training device: cpu/0/0,1/0-7")
     optimizer = Column(String(20), default="SGD", comment="优化器：SGD/Adam/AdamW")
     lr0 = Column(Float, default=0.01, comment="初始学习率")
     augment_config = Column(JSON, nullable=True, comment="数据增强配置")
@@ -392,3 +393,22 @@ class OperationLog(Base):
 
     # 关联
     user = relationship("User", back_populates="operation_logs")
+
+
+# ══════════════════════════════════════════════════════════════
+# 六、商品价格
+# ══════════════════════════════════════════════════════════════
+
+class ProductPrice(Base):
+    """商品价格表 — 每个 category_id 对应一个 SKU 的单价"""
+    __tablename__ = "product_prices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    category_id = Column(Integer, unique=True, nullable=False, index=True, comment="检测类别 ID，对应 instances_train2019.json")
+    sku_name = Column(String(100), nullable=True, comment="SKU 英文名")
+    name = Column(String(100), nullable=True, comment="商品中文名")
+    barcode = Column(String(50), nullable=True, comment="商品条码")
+    unit_price = Column(Float, nullable=False, default=0.0, comment="单价（元）")
+    currency = Column(String(10), default="CNY", comment="货币")
+    created_at = Column(DateTime, default=datetime.now, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="更新时间")

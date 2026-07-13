@@ -20,11 +20,23 @@ const routes = [
     component: () => import('@/views/RegisterPage.vue'),
     meta: { title: '注册', requiresAuth: false },
   },
+  {
+    path: '/checkout',
+    name: 'CustomerCheckout',
+    component: () => import('@/views/CustomerCheckoutPage.vue'),
+    meta: { title: '自助结算', requiresAuth: false },
+  },
+  {
+    path: '/checkout/payment',
+    name: 'CustomerPayment',
+    component: () => import('@/views/CustomerPaymentPage.vue'),
+    meta: { title: '确认付款', requiresAuth: false },
+  },
   // ── 需要登录的页面（使用 MainLayout 布局） ──────
   {
     path: '/',
     component: () => import('@/components/layout/MainLayout.vue'),
-    redirect: '/chat',
+    redirect: '/detection',
     meta: { requiresAuth: true },
     children: [
       {
@@ -76,11 +88,11 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   // 设置页面标题
   document.title = to.meta.title
-    ? `${to.meta.title} - My Agent Platform`
-    : 'My Agent Platform'
+    ? `${to.meta.title} - VisionPay Agent Platform`
+    : 'VisionPay Agent Platform'
 
   // 检查是否需要认证
-  const token = localStorage.getItem('my_agent_token')
+  const token = localStorage.getItem('vp_agent_token')
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false)
 
   if (requiresAuth && !token) {

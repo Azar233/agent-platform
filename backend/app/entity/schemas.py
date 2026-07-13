@@ -11,7 +11,11 @@ Pydantic 请求/响应模型
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ProjectBaseModel(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
 
 
 # ══════════════════════════════════════════════════════════════
@@ -20,20 +24,20 @@ from pydantic import BaseModel, Field
 
 # --- 认证相关 ---
 
-class UserRegister(BaseModel):
+class UserRegister(ProjectBaseModel):
     """用户注册请求"""
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
     email: str = Field(..., description="邮箱")
     password: str = Field(..., min_length=6, max_length=100, description="密码")
 
 
-class UserLogin(BaseModel):
+class UserLogin(ProjectBaseModel):
     """用户登录请求"""
     username: str = Field(..., description="用户名或邮箱")
     password: str = Field(..., description="密码")
 
 
-class UserBrief(BaseModel):
+class UserBrief(ProjectBaseModel):
     """用户简要信息（嵌入在 Token 响应中）"""
     id: int
     username: str
@@ -46,7 +50,7 @@ class UserBrief(BaseModel):
     }
 
 
-class TokenResponse(BaseModel):
+class TokenResponse(ProjectBaseModel):
     """登录成功响应"""
     access_token: str
     token_type: str = "bearer"
@@ -55,7 +59,7 @@ class TokenResponse(BaseModel):
 
 # --- 用户管理 ---
 
-class UserResponse(BaseModel):
+class UserResponse(ProjectBaseModel):
     """用户详情响应"""
     id: int
     username: str
@@ -73,14 +77,14 @@ class UserResponse(BaseModel):
     }
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(ProjectBaseModel):
     """用户信息更新"""
     phone: Optional[str] = None
     avatar: Optional[str] = None
     email: Optional[str] = None
 
 
-class ChangePassword(BaseModel):
+class ChangePassword(ProjectBaseModel):
     """修改密码"""
     old_password: str = Field(..., description="旧密码")
     new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
@@ -88,7 +92,7 @@ class ChangePassword(BaseModel):
 
 # --- 角色权限 ---
 
-class RoleResponse(BaseModel):
+class RoleResponse(ProjectBaseModel):
     """角色响应"""
     id: int
     name: str
@@ -102,7 +106,7 @@ class RoleResponse(BaseModel):
         from_attributes = True
 
 
-class RoleCreate(BaseModel):
+class RoleCreate(ProjectBaseModel):
     """创建角色"""
     name: str = Field(..., min_length=2, max_length=50, description="角色标识")
     display_name: str = Field(..., description="角色显示名")
@@ -110,7 +114,7 @@ class RoleCreate(BaseModel):
     permission_codes: list[str] = Field(default=[], description="权限编码列表")
 
 
-class PermissionResponse(BaseModel):
+class PermissionResponse(ProjectBaseModel):
     """权限响应"""
     id: int
     code: str
@@ -128,7 +132,7 @@ class PermissionResponse(BaseModel):
 
 # --- 检测场景 ---
 
-class SceneCreate(BaseModel):
+class SceneCreate(ProjectBaseModel):
     """创建检测场景"""
     name: str = Field(..., description="场景标识，如 remote_sensing")
     display_name: str = Field(..., description="场景显示名，如 遥感目标检测")
@@ -138,7 +142,7 @@ class SceneCreate(BaseModel):
     class_names_cn: Optional[dict[str, str]] = Field(None, description="中文名映射")
 
 
-class SceneResponse(BaseModel):
+class SceneResponse(ProjectBaseModel):
     """检测场景响应"""
     id: int
     name: str
@@ -157,7 +161,7 @@ class SceneResponse(BaseModel):
 
 # --- 检测任务 ---
 
-class DetectionTaskResponse(BaseModel):
+class DetectionTaskResponse(ProjectBaseModel):
     """检测任务响应"""
     id: int
     user_id: int
@@ -181,7 +185,7 @@ class DetectionTaskResponse(BaseModel):
     }
 
 
-class DetectionResultResponse(BaseModel):
+class DetectionResultResponse(ProjectBaseModel):
     """单条检测结果响应"""
     id: int
     task_id: int
@@ -201,7 +205,7 @@ class DetectionResultResponse(BaseModel):
         from_attributes = True
 
 
-class DetectionTaskDetail(BaseModel):
+class DetectionTaskDetail(ProjectBaseModel):
     """检测任务详情（含结果列表）"""
     task: DetectionTaskResponse
     results: list[DetectionResultResponse] = []
@@ -209,7 +213,7 @@ class DetectionTaskDetail(BaseModel):
 
 # --- 检测统计 ---
 
-class DetectionStatistics(BaseModel):
+class DetectionStatistics(ProjectBaseModel):
     """检测统计数据"""
     total_tasks: int
     total_images: int
@@ -221,29 +225,63 @@ class DetectionStatistics(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════
-# 三、模型管理
+# 三、商品价格
+# ══════════════════════════════════════════════════════════════
+
+class ProductPriceCreate(ProjectBaseModel):
+    """创建/更新商品价格"""
+    category_id: int = Field(..., description="检测类别 ID")
+    sku_name: Optional[str] = Field(None, description="SKU 英文名")
+    name: Optional[str] = Field(None, description="商品中文名")
+    barcode: Optional[str] = Field(None, description="商品条码")
+    unit_price: float = Field(..., ge=0, description="单价（元）")
+    currency: str = Field(default="CNY", description="货币")
+
+
+class ProductPriceResponse(ProjectBaseModel):
+    """商品价格响应"""
+    id: int
+    category_id: int
+    sku_name: Optional[str] = None
+    name: Optional[str] = None
+    barcode: Optional[str] = None
+    unit_price: float
+    currency: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# 四、模型管理
 # ══════════════════════════════════════════════════════════════
 
 # --- 训练任务 ---
 
-class TrainingTaskCreate(BaseModel):
+class TrainingTaskCreate(ProjectBaseModel):
     """创建训练任务"""
     scene_id: int = Field(..., description="关联场景 ID")
     model_name: str = Field(default="yolov11n", description="基础模型")
-    epochs: int = Field(default=100, ge=10, le=500, description="训练轮数")
+    epochs: int = Field(default=100, ge=1, le=500, description="训练轮数")
     img_size: int = Field(default=640, description="图像尺寸")
-    batch_size: int = Field(default=16, ge=1, le=64, description="批次大小")
-    device: str = Field(default="0", description="训练设备")
+    batch_size: int = Field(default=16, ge=1, le=512, description="Global batch size")
+    device: str = Field(default="0", description="Training device: cpu, 0, 0,1,2,3, or 0-7")
     optimizer: str = Field(default="SGD", description="优化器")
     lr0: float = Field(default=0.01, description="初始学习率")
     augment_config: Optional[dict] = Field(None, description="数据增强配置")
+    dataset_path: Optional[str] = Field(None, description="数据集目录，默认 datasets/vision_pay")
+    data_yaml: Optional[str] = Field(None, description="data.yaml 路径，默认在数据集目录下查找")
 
     model_config = {
         "protected_namespaces": (),
     }
 
 
-class TrainingTaskResponse(BaseModel):
+class TrainingTaskResponse(ProjectBaseModel):
     """训练任务响应"""
     id: int
     user_id: int
@@ -270,7 +308,7 @@ class TrainingTaskResponse(BaseModel):
     }
 
 
-class TrainingMetricResponse(BaseModel):
+class TrainingMetricResponse(ProjectBaseModel):
     """训练指标响应（单 epoch）"""
     epoch: int
     box_loss: Optional[float] = None
@@ -285,10 +323,34 @@ class TrainingMetricResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class ModelValidateRequest(ProjectBaseModel):
+    """模型评估请求"""
+    split: str = Field(default="val", pattern="^(train|val|test)$", description="评估集划分")
+    conf: float = Field(default=0.001, ge=0, le=1, description="置信度阈值")
+    iou: float = Field(default=0.6, ge=0, le=1, description="NMS IoU 阈值")
+    img_size: Optional[int] = Field(default=None, ge=32, description="评估图像尺寸")
+    device: Optional[str] = Field(default=None, description="评估设备，如 cpu 或 0")
+
+
+class ModelExportRequest(ProjectBaseModel):
+    """模型导出请求"""
+    version: Optional[str] = Field(default=None, description="模型版本号，如 v1.0.0")
+    description: Optional[str] = Field(default=None, description="版本说明")
+    set_default: bool = Field(default=True, description="是否设置为场景默认模型")
+
+
+class ModelExportResponse(ProjectBaseModel):
+    """模型导出响应"""
+    message: str
+    model_version: dict
+    model_path: str
+    model_dir: str
+    report_path: Optional[str] = None
+
 
 # --- 模型版本 ---
 
-class ModelVersionBrief(BaseModel):
+class ModelVersionBrief(ProjectBaseModel):
     """模型版本简要信息"""
     id: int
     version: str
@@ -304,7 +366,7 @@ class ModelVersionBrief(BaseModel):
     }
 
 
-class ModelVersionResponse(BaseModel):
+class ModelVersionResponse(ProjectBaseModel):
     """模型版本详情"""
     id: int
     scene_id: int
@@ -332,7 +394,7 @@ class ModelVersionResponse(BaseModel):
     }
 
 
-class ModelVersionCreate(BaseModel):
+class ModelVersionCreate(ProjectBaseModel):
     """手动上传模型版本"""
     scene_id: int
     version: str = Field(..., description="版本号")
@@ -349,12 +411,12 @@ class ModelVersionCreate(BaseModel):
 # 四、智能体对话
 # ══════════════════════════════════════════════════════════════
 
-class ChatSessionCreate(BaseModel):
+class ChatSessionCreate(ProjectBaseModel):
     """创建对话会话"""
     title: Optional[str] = None
 
 
-class ChatSessionResponse(BaseModel):
+class ChatSessionResponse(ProjectBaseModel):
     """对话会话响应"""
     id: int
     session_uuid: str
@@ -368,13 +430,13 @@ class ChatSessionResponse(BaseModel):
         from_attributes = True
 
 
-class ChatMessageRequest(BaseModel):
+class ChatMessageRequest(ProjectBaseModel):
     """发送消息请求"""
     session_id: Optional[int] = Field(None, description="会话 ID（为空则自动创建新会话）")
     content: str = Field(..., min_length=1, max_length=5000, description="消息内容")
 
 
-class ChatMessageResponse(BaseModel):
+class ChatMessageResponse(ProjectBaseModel):
     """对话消息响应"""
     id: int
     session_id: int
@@ -391,7 +453,7 @@ class ChatMessageResponse(BaseModel):
         from_attributes = True
 
 
-class ChatHistoryResponse(BaseModel):
+class ChatHistoryResponse(ProjectBaseModel):
     """对话历史响应（含会话信息和消息列表）"""
     session: ChatSessionResponse
     messages: list[ChatMessageResponse] = []
@@ -401,7 +463,7 @@ class ChatHistoryResponse(BaseModel):
 # 五、系统运维
 # ══════════════════════════════════════════════════════════════
 
-class OperationLogResponse(BaseModel):
+class OperationLogResponse(ProjectBaseModel):
     """操作日志响应"""
     id: int
     user_id: Optional[int] = None
@@ -426,20 +488,20 @@ class OperationLogResponse(BaseModel):
 # 六、通用模型
 # ══════════════════════════════════════════════════════════════
 
-class ApiResponse(BaseModel):
+class ApiResponse(ProjectBaseModel):
     """统一 API 响应"""
     code: int = 200
     message: str = "success"
     data: Optional[dict | list] = None
 
 
-class PageParams(BaseModel):
+class PageParams(ProjectBaseModel):
     """分页查询参数"""
     page: int = Field(default=1, ge=1, description="页码")
     page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
 
 
-class PageResponse(BaseModel):
+class PageResponse(ProjectBaseModel):
     """分页响应"""
     total: int
     page: int
@@ -448,7 +510,7 @@ class PageResponse(BaseModel):
     items: list
 
 
-class HealthResponse(BaseModel):
+class HealthResponse(ProjectBaseModel):
     """健康检查响应"""
     status: str = "healthy"
     app_name: str
