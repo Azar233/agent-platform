@@ -158,4 +158,5 @@ dmypy.json
 docs/
 .LiuCheng/
 logs/
+log/
 *.log
