@@ -225,7 +225,39 @@ class DetectionStatistics(ProjectBaseModel):
 
 
 # ══════════════════════════════════════════════════════════════
-# 三、模型管理
+# 三、商品价格
+# ══════════════════════════════════════════════════════════════
+
+class ProductPriceCreate(ProjectBaseModel):
+    """创建/更新商品价格"""
+    category_id: int = Field(..., description="检测类别 ID")
+    sku_name: Optional[str] = Field(None, description="SKU 英文名")
+    name: Optional[str] = Field(None, description="商品中文名")
+    barcode: Optional[str] = Field(None, description="商品条码")
+    unit_price: float = Field(..., ge=0, description="单价（元）")
+    currency: str = Field(default="CNY", description="货币")
+
+
+class ProductPriceResponse(ProjectBaseModel):
+    """商品价格响应"""
+    id: int
+    category_id: int
+    sku_name: Optional[str] = None
+    name: Optional[str] = None
+    barcode: Optional[str] = None
+    unit_price: float
+    currency: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# 四、模型管理
 # ══════════════════════════════════════════════════════════════
 
 # --- 训练任务 ---
@@ -243,6 +275,33 @@ class TrainingTaskCreate(ProjectBaseModel):
     augment_config: Optional[dict] = Field(None, description="数据增强配置")
     dataset_path: Optional[str] = Field(None, description="数据集目录，默认 datasets/vision_pay")
     data_yaml: Optional[str] = Field(None, description="data.yaml 路径，默认在数据集目录下查找")
+
+    model_config = {
+        "protected_namespaces": (),
+    }
+
+
+class TrainingRunImportRequest(ProjectBaseModel):
+    """导入 sbatch/离线训练输出目录。"""
+    scene_id: int = Field(..., description="关联场景 ID")
+    run_dir: str = Field(..., description="Ultralytics run 目录，包含 results.csv 和 weights/")
+    task_uuid: Optional[str] = Field(None, description="导入后的任务 ID；默认从 run_dir 名称推断")
+    status: str = Field(
+        default="completed",
+        pattern="^(completed|failed|cancelled)$",
+        description="导入后的任务状态",
+    )
+    model_name: Optional[str] = Field(None, description="基础模型；默认读取 args.yaml")
+    epochs: Optional[int] = Field(None, ge=1, le=1000, description="训练轮数；默认读取 args.yaml/results.csv")
+    img_size: Optional[int] = Field(None, ge=32, description="图像尺寸；默认读取 args.yaml")
+    batch_size: Optional[int] = Field(None, ge=1, le=4096, description="Global batch size；默认读取 args.yaml")
+    device: Optional[str] = Field(None, description="训练设备；默认读取 args.yaml")
+    optimizer: Optional[str] = Field(None, description="优化器；默认读取 args.yaml")
+    lr0: Optional[float] = Field(None, description="初始学习率；默认读取 args.yaml")
+    augment_config: Optional[dict] = Field(None, description="数据增强配置；可选")
+    dataset_path: Optional[str] = Field(None, description="数据集目录；默认由 data_yaml 推断")
+    data_yaml: Optional[str] = Field(None, description="data.yaml 路径；默认读取 args.yaml")
+    log_path: Optional[str] = Field(None, description="sbatch/训练日志路径；可选，会导入尾部日志")
 
     model_config = {
         "protected_namespaces": (),

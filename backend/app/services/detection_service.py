@@ -24,6 +24,7 @@ from app.entity.db_models import (
     DetectionScene,
     DetectionTask,
     ModelVersion,
+    ProductPrice,
     TrainingTask,
 )
 
@@ -160,6 +161,70 @@ class DetectionService:
         }
 
     @staticmethod
+    def _calculate_total_price(db, detections: list[dict[str, Any]]) -> dict[str, Any]:
+        """
+        根据检测结果计算总价。
+
+        返回:
+            {
+                "total_price": 总价,
+                "currency": "CNY",
+                "items": [
+                    {
+                        "class_id": ...,
+                        "class_name": ...,
+                        "count": ...,
+                        "unit_price": ...,
+                        "subtotal": ...,
+                    }
+                ],
+            }
+        """
+        counts: dict[int, int] = Counter()
+        name_map: dict[int, str] = {}
+        for detection in detections:
+            class_id = int(detection["class_id"])
+            counts[class_id] += 1
+            name_map[class_id] = detection["class_name"]
+
+        if not counts:
+            return {"total_price": 0.0, "currency": "CNY", "items": []}
+
+        category_ids = list(counts.keys())
+        prices = {
+            price.category_id: price.unit_price
+            for price in db.query(ProductPrice)
+            .filter(ProductPrice.category_id.in_(category_ids))
+            .all()
+        }
+
+        missing = [cid for cid in category_ids if cid not in prices]
+        if missing:
+            logger.warning("以下 category_id 未设置价格，按 0 元计算: %s", missing)
+
+        items = []
+        total_price = 0.0
+        for class_id, count in sorted(counts.items()):
+            unit_price = prices.get(class_id, 0.0)
+            subtotal = round(count * unit_price, 2)
+            total_price += subtotal
+            items.append(
+                {
+                    "class_id": class_id,
+                    "class_name": name_map.get(class_id, ""),
+                    "count": count,
+                    "unit_price": unit_price,
+                    "subtotal": subtotal,
+                }
+            )
+
+        return {
+            "total_price": round(total_price, 2),
+            "currency": "CNY",
+            "items": items,
+        }
+
+    @staticmethod
     def _persist_results(
         db,
         task: DetectionTask,
@@ -244,6 +309,12 @@ class DetectionService:
             task.total_inference_time = total_inference
             task.completed_at = datetime.now()
             db.commit()
+
+            all_detections = [
+                detection for item in items for detection in item["detections"]
+            ]
+            price_summary = self._calculate_total_price(db, all_detections)
+
             return {
                 "task_id": task.id,
                 "source": source,
@@ -254,6 +325,7 @@ class DetectionService:
                 "total_inference_time_ms": total_inference,
                 "class_counts": dict(class_counts),
                 "items": items,
+                "price_summary": price_summary,
             }
         except Exception as exc:
             db.rollback()
