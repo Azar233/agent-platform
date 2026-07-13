@@ -48,9 +48,9 @@
         </div>
 
         <div class="capture-footer">
-          <div><span>识别状态</span><strong>已完成</strong></div>
+          <div><span>识别状态</span><strong>{{ detectionStatus }}</strong></div>
           <div><span>画面内商品</span><strong>{{ totalItems }} 件</strong></div>
-          <div><span>平均置信度</span><strong>94.2%</strong></div>
+          <div><span>平均置信度</span><strong>{{ averageConfidence }}</strong></div>
         </div>
       </section>
 
@@ -60,30 +60,32 @@
           <strong>{{ totalItems }} 件</strong>
         </div>
 
-        <div class="price-notice"><el-icon><InfoFilled /></el-icon><span>商品价目表尚未接入，当前仅展示识别与数量框架。</span></div>
+        <div v-if="products.length && !pricingComplete" class="price-notice"><el-icon><InfoFilled /></el-icon><span>{{ unpricedItems }} 件商品尚未配置价格，请先在价目表中补齐后再结算。</span></div>
+        <div v-else-if="detectionError" class="price-notice"><el-icon><InfoFilled /></el-icon><span>{{ detectionError }}</span></div>
 
         <div class="product-list">
-          <article v-for="item in products" :key="item.id" class="product-item">
+          <article v-for="item in products" :key="item.classId" class="product-item">
             <div class="product-thumb"><span>{{ item.short }}</span></div>
             <div class="product-copy">
               <strong>{{ item.name }}</strong>
               <span>{{ item.category }} · 置信度 {{ item.confidence }}</span>
-              <b>价格待接入</b>
+              <b v-if="item.hasPrice">{{ formatMoney(item.unitPrice) }} / 件 · 小计 {{ formatMoney(item.unitPrice * item.quantity) }}</b>
+              <b v-else>价格未配置</b>
             </div>
             <div class="quantity-control">
               <button type="button" :disabled="item.quantity <= 1" @click="item.quantity--"><el-icon><Minus /></el-icon></button>
               <span>{{ item.quantity }}</span>
               <button type="button" @click="item.quantity++"><el-icon><Plus /></el-icon></button>
             </div>
-            <button type="button" class="remove-button" aria-label="移除商品" @click="removeProduct(item.id)"><el-icon><Delete /></el-icon></button>
+            <button type="button" class="remove-button" aria-label="移除商品" @click="removeProduct(item.classId)"><el-icon><Delete /></el-icon></button>
           </article>
 
           <div v-if="!products.length" class="empty-basket"><el-icon><ShoppingCart /></el-icon><strong>暂未识别到商品</strong><span>请重新扫描或上传商品图片</span></div>
         </div>
 
         <footer class="settlement-panel">
-          <div class="settlement-summary"><span>应付金额</span><strong>¥ --</strong><small>等待价目表服务接入</small></div>
-          <button type="button" :disabled="!products.length" @click="goToPayment"><span>确认商品并去结算</span><el-icon><ArrowRight /></el-icon></button>
+          <div class="settlement-summary"><span>应付金额</span><strong>{{ formatMoney(totalPrice) }}</strong><small>{{ pricingComplete ? '价格已按当前数量计算' : '总价不含未定价商品' }}</small></div>
+          <button type="button" :disabled="!products.length || !pricingComplete || detecting" @click="goToPayment"><span>确认商品并去结算</span><el-icon><ArrowRight /></el-icon></button>
           <p>继续即表示您已确认以上商品和数量</p>
         </footer>
       </section>
@@ -94,7 +96,9 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { ArrowRight, Camera, CircleCheckFilled, Delete, InfoFilled, Minus, Plus, Refresh, ShoppingCart, UploadFilled } from '@element-plus/icons-vue'
+import { detectSingleApi } from '@/api/detection'
 
 const router = useRouter()
 const sourceMode = ref('camera')
@@ -105,25 +109,77 @@ const cameraStreamUrl = ref('')
 const cameraConnected = ref(false)
 const cameraStatusText = ref('等待连接')
 const cameraError = ref('')
+const detecting = ref(false)
+const detectionResult = ref(null)
+const detectionError = ref('')
 let cameraConnectTimer = null
-const seedProducts = () => [
-  { id: 1, name: '可口可乐 330ml', category: '饮料', confidence: '97.6%', short: '可乐', quantity: 1 },
-  { id: 2, name: '原味薯片', category: '休闲食品', confidence: '94.1%', short: '薯片', quantity: 1 },
-  { id: 3, name: '纯牛奶 250ml', category: '乳制品', confidence: '90.9%', short: '牛奶', quantity: 1 },
-]
-const products = ref(seedProducts())
+let detectionSequence = 0
+const products = ref([])
 const totalItems = computed(() => products.value.reduce((sum, item) => sum + item.quantity, 0))
+const totalPrice = computed(() => Math.round(products.value.reduce((sum, item) => sum + (item.hasPrice ? item.unitPrice * item.quantity : 0), 0) * 100) / 100)
+const unpricedItems = computed(() => products.value.reduce((sum, item) => sum + (item.hasPrice ? 0 : item.quantity), 0))
+const pricingComplete = computed(() => products.value.length > 0 && unpricedItems.value === 0)
+const detectionStatus = computed(() => detecting.value ? '识别中' : detectionError.value ? '识别失败' : detectionResult.value ? '已完成' : '待扫描')
+const averageConfidence = computed(() => {
+  const detections = detectionResult.value?.items?.flatMap((item) => item.detections || []) || []
+  if (!detections.length) return '--'
+  return `${(detections.reduce((sum, item) => sum + Number(item.confidence || 0), 0) / detections.length * 100).toFixed(1)}%`
+})
 
-function setPreview(file) {
+async function setPreview(file) {
   if (!file?.type?.startsWith('image/')) return
+  const sequence = ++detectionSequence
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = URL.createObjectURL(file)
+  detecting.value = true
+  detectionError.value = ''
+  products.value = []
+  try {
+    const result = await detectSingleApi(file)
+    if (sequence !== detectionSequence) return
+    detectionResult.value = result
+    const confidences = new Map()
+    for (const detection of result.items?.flatMap((item) => item.detections || []) || []) {
+      const values = confidences.get(detection.class_id) || []
+      values.push(Number(detection.confidence || 0))
+      confidences.set(detection.class_id, values)
+    }
+    products.value = (result.price_summary?.items || []).map((item) => {
+      const values = confidences.get(item.class_id) || []
+      const confidence = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
+      const displayName = item.name || item.sku_name || item.class_name || `商品 ${item.class_id}`
+      return {
+        classId: item.class_id,
+        name: displayName,
+        category: item.class_name,
+        confidence: `${(confidence * 100).toFixed(1)}%`,
+        short: displayName.slice(0, 2),
+        quantity: item.count,
+        unitPrice: Number(item.unit_price || 0),
+        hasPrice: Boolean(item.has_price),
+        currency: item.currency || 'CNY',
+        barcode: item.barcode || '',
+      }
+    })
+    if (!products.value.length) ElMessage.warning('当前阈值下未识别到商品')
+  } catch {
+    if (sequence !== detectionSequence) return
+    detectionResult.value = null
+    detectionError.value = '商品识别失败，请检查检测模型和场景配置后重试。'
+  } finally {
+    if (sequence === detectionSequence) detecting.value = false
+  }
 }
 function handleUpload(event) { setPreview(event.target.files?.[0]); event.target.value = '' }
 function handleDrop(event) { setPreview(event.dataTransfer.files?.[0]) }
-function removeProduct(id) { products.value = products.value.filter((item) => item.id !== id) }
-function resetDemo() { products.value = seedProducts(); selectSource('camera'); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); previewUrl.value = '' }
-function goToPayment() { router.push({ path: '/checkout/payment', query: { items: totalItems.value } }) }
+function removeProduct(classId) { products.value = products.value.filter((item) => item.classId !== classId) }
+function resetDemo() { detectionSequence++; detecting.value = false; products.value = []; detectionResult.value = null; detectionError.value = ''; selectSource('camera'); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); previewUrl.value = '' }
+function formatMoney(value) { return `¥ ${Number(value || 0).toFixed(2)}` }
+function goToPayment() {
+  const order = { items: products.value, itemCount: totalItems.value, totalPrice: totalPrice.value, currency: 'CNY' }
+  sessionStorage.setItem('visionpay-checkout-order', JSON.stringify(order))
+  router.push('/checkout/payment')
+}
 function connectIpCamera() {
   cameraError.value = ''
   cameraConnected.value = false
@@ -139,7 +195,7 @@ function handleCameraError() { window.clearTimeout(cameraConnectTimer); cameraCo
 function disconnectIpCamera() { window.clearTimeout(cameraConnectTimer); cameraStreamUrl.value = ''; cameraConnected.value = false; cameraStatusText.value = '等待连接'; cameraError.value = '' }
 function selectSource(mode) { sourceMode.value = mode; if (mode === 'camera') connectIpCamera(); else disconnectIpCamera() }
 onMounted(connectIpCamera)
-onBeforeUnmount(() => { if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); disconnectIpCamera() })
+onBeforeUnmount(() => { detectionSequence++; if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); disconnectIpCamera() })
 </script>
 
 <style lang="scss" scoped>

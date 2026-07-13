@@ -11,6 +11,7 @@ import threading
 import zipfile
 from collections import Counter
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -188,11 +189,21 @@ class DetectionService:
             name_map[class_id] = detection["class_name"]
 
         if not counts:
-            return {"total_price": 0.0, "currency": "CNY", "items": []}
+            return {
+                "total_price": 0.0,
+                "currency": "CNY",
+                "items": [],
+                "pricing_complete": True,
+                "missing_category_ids": [],
+                "priced_objects": 0,
+                "unpriced_objects": 0,
+            }
 
-        category_ids = list(counts.keys())
+        # YOLO uses zero-based class IDs while instances_train2019.json (and
+        # product_prices) uses one-based category IDs: class 0 -> category 1.
+        category_ids = [class_id + 1 for class_id in counts]
         prices = {
-            price.category_id: price.unit_price
+            price.category_id: price
             for price in db.query(ProductPrice)
             .filter(ProductPrice.category_id.in_(category_ids))
             .all()
@@ -200,28 +211,51 @@ class DetectionService:
 
         missing = [cid for cid in category_ids if cid not in prices]
         if missing:
-            logger.warning("以下 category_id 未设置价格，按 0 元计算: %s", missing)
+            logger.warning("以下 category_id 未设置价格，暂不计入总价: %s", missing)
 
         items = []
-        total_price = 0.0
+        total_price = Decimal("0.00")
+        priced_objects = 0
+        unpriced_objects = 0
         for class_id, count in sorted(counts.items()):
-            unit_price = prices.get(class_id, 0.0)
-            subtotal = round(count * unit_price, 2)
+            category_id = class_id + 1
+            price = prices.get(category_id)
+            has_price = price is not None
+            unit_price = Decimal(str(price.unit_price if price else 0)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            subtotal = (unit_price * count).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
             total_price += subtotal
+            if has_price:
+                priced_objects += count
+            else:
+                unpriced_objects += count
             items.append(
                 {
                     "class_id": class_id,
+                    "category_id": category_id,
                     "class_name": name_map.get(class_id, ""),
+                    "sku_name": price.sku_name if price else None,
+                    "name": price.name if price else None,
+                    "barcode": price.barcode if price else None,
                     "count": count,
-                    "unit_price": unit_price,
-                    "subtotal": subtotal,
+                    "unit_price": float(unit_price),
+                    "subtotal": float(subtotal),
+                    "currency": (price.currency or "CNY") if price else "CNY",
+                    "has_price": has_price,
                 }
             )
 
         return {
-            "total_price": round(total_price, 2),
+            "total_price": float(total_price.quantize(Decimal("0.01"))),
             "currency": "CNY",
             "items": items,
+            "pricing_complete": not missing,
+            "missing_category_ids": sorted(missing),
+            "priced_objects": priced_objects,
+            "unpriced_objects": unpriced_objects,
         }
 
     @staticmethod

@@ -16,6 +16,7 @@ VisionPay 是一个基于 YOLOv11 的零售商品自动结账智能体平台（A
 - 前端模型训练监控页面：任务列表、创建训练任务、ECharts loss/mAP 曲线。
 - Day 8 商品识别 Agent：DeepSeek Tool Calling、SSE 流式对话、单图/多图/ZIP 检测。
 - 智能识别工作台：附件拖拽、阈值控制、快捷直检、标注图与商品类别汇总。
+- 商品价格表与结算：检测结果自动查询 SKU 单价、汇总总价，并接入 `/detection` 和 `/checkout`。
 
 ## 技术栈
 
@@ -121,8 +122,8 @@ DEEPSEEK_API_KEY=sk-your-deepseek-api-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
 
-# 可选：直接指定检测权重；留空时查找场景默认模型或最新训练 best.pt
-DETECTION_MODEL_PATH=
+# 商品识别使用的固定权重（请按当前项目的实际绝对路径修改）
+DETECTION_MODEL_PATH=D:/code/Git/Agent/agent-platform/backend/best.pt
 ```
 
 执行数据库迁移并启动后端：
@@ -187,7 +188,9 @@ http://127.0.0.1:5173
 | `/register` | 注册 | 已完成 |
 | `/training` | 模型训练 | Day 6 已完成 |
 | `/chat` | 通用智能对话 | 后续实现 |
-| `/detection` | 商品检测 Agent、单图/多图/ZIP 工作台 | Day 8 已完成 |
+| `/detection` | 商品检测 Agent、单图/多图/ZIP、价格汇总 | 已完成 |
+| `/checkout` | 图片识别、商品清单、数量调整与价格计算 | 已完成（真实支付待接入） |
+| `/checkout/payment` | 已确认订单与应付金额 | 金额已接入，真实支付待接入 |
 | `/history` | 历史记录 | 后续完善 |
 | `/dashboard` | 数据看板 | 后续完善 |
 
@@ -209,6 +212,87 @@ http://127.0.0.1:5173
 | `POST` | `/api/detection/zip` | ZIP 解压与批量检测 |
 
 快捷“立即识别”按钮直接调用检测 API；自然语言指令通过 DeepSeek Agent 自动选择单图、多图或 ZIP Tool。检测模型按 `DETECTION_MODEL_PATH`、场景默认模型、最新完成训练的 `best.pt` 顺序选择。
+
+## 商品识别模型与价格初始化
+
+要让 `/detection` 和 `/checkout` 完成真实商品识别与价格计算，需要同时准备检测权重和商品价格表。
+
+### 1. 放置并配置检测模型
+
+将训练完成的 `best.pt` 放到后端根目录：
+
+```text
+agent-platform/
+└── backend/
+    └── best.pt
+```
+
+然后在 `backend/.env` 中填写该文件的绝对路径：
+
+```env
+DETECTION_MODEL_PATH=D:/code/Git/Agent/agent-platform/backend/best.pt
+```
+
+Windows 下建议在 `.env` 中使用 `/`，避免反斜杠转义问题。项目复制到其他目录或其他电脑后，必须同步修改这个绝对路径。修改 `.env` 后需要重启后端。
+
+检测模型的选择优先级如下：
+
+1. `DETECTION_MODEL_PATH` 指定的权重。
+2. 数据库中当前场景已导出且设为默认的模型版本。
+3. 当前场景最新的 `completed` 训练任务下的 `runs/train/task_<task_uuid>/weights/best.pt`。
+
+只要配置了有效的 `DETECTION_MODEL_PATH`，检测服务就会固定使用该文件，不再回退到训练任务目录。当前零售模型应包含 200 个类别，类别名称从 `1_puffed_food` 到 `200_stationery`。
+
+### 2. 创建并初始化商品价格表
+
+价格表由 Alembic 迁移 `42de18617828_add_product_prices_table.py` 创建。先执行数据库迁移：
+
+```powershell
+cd backend
+alembic upgrade head
+```
+
+将 RPC 数据集的商品元数据放在项目根目录：
+
+```text
+agent-platform/
+├── instances_train2019.json
+└── backend/
+```
+
+然后在 `backend/` 目录执行：
+
+```powershell
+python tools\init_prices.py
+```
+
+成功时会输出类似：
+
+```text
+Loaded 200 SKU definitions ...
+Price import complete: created=200, updated=0
+```
+
+脚本可重复执行：已有 `category_id` 会更新，不会重复插入。当前 `PRICE_MAP` 按 17 个商品大类提供演示单价，覆盖全部 200 个 SKU，但这些价格不是每个 SKU 的真实市场售价；正式使用前应通过 `backend/tools/init_prices.py` 或 `/api/prices/batch` 替换为真实价格。
+
+RPC JSON 与价格表使用 1–200 的 `category_id`，YOLO 使用 0–199 的 `class_id`。检测服务会自动按 `category_id = class_id + 1` 查询价格，不需要修改 JSON 或训练标签。
+
+### 3. 检测和结算中的价格行为
+
+- `/detection` 在单图、多图或 ZIP 检测完成后返回 `price_summary`，包含商品名称、数量、单价、小计、总价和缺价状态。
+- 未配置价格的商品不会计入总价；响应会返回 `pricing_complete=false`、缺价类别和未定价件数。
+- `/checkout` 的“图片上传”会调用 `/api/detection/single`，根据识别结果生成购物篮；增减数量会实时重新计算总价。
+- 存在未定价商品时，结算按钮会被禁用，避免生成金额不完整的订单。
+- `/checkout/payment` 会展示上一页确认后的商品、数量和应付金额；订单创建及微信、支付宝、银行卡真实支付仍待接入。
+- IP Webcam 当前只提供 MJPEG 实时预览，尚未实现抓帧并发送给 YOLO；需要结算时请使用“图片上传”。
+
+价格管理接口均需要登录态：
+
+| 方法 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| `GET` | `/api/prices` | 获取全部 SKU 价格 |
+| `GET` | `/api/prices/{category_id}` | 获取单个 SKU 价格 |
+| `POST` | `/api/prices/batch` | 批量创建或更新价格 |
 
 ## 数据集导入
 
@@ -468,8 +552,10 @@ backend/runs/train/task_<task_uuid>/
 ```text
 agent-platform/
 ├── docker-compose.yml
+├── instances_train2019.json       # 本地价格初始化所需的 RPC 商品元数据
 ├── README.md
 ├── backend/
+│   ├── best.pt                    # DETECTION_MODEL_PATH 指向的固定检测权重
 │   ├── main.py
 │   ├── requirements.txt
 │   ├── alembic.ini
@@ -478,7 +564,9 @@ agent-platform/
 │   ├── app/
 │   │   ├── api/
 │   │   │   ├── auth.py
+│   │   │   ├── detection.py
 │   │   │   ├── health.py
+│   │   │   ├── prices.py
 │   │   │   └── training.py
 │   │   ├── config/
 │   │   │   └── settings.py
@@ -494,6 +582,7 @@ agent-platform/
 │   │   ├── middleware/
 │   │   │   └── request_logger.py
 │   │   ├── services/
+│   │   │   ├── detection_service.py
 │   │   │   └── user_service.py
 │   │   ├── storage/
 │   │   │   └── minio_client.py
@@ -505,6 +594,7 @@ agent-platform/
 │   │   ├── convert_coco.py
 │   │   ├── convert_coco_splits.py
 │   │   ├── fix_bbox.py
+│   │   ├── init_prices.py
 │   │   ├── verify_dataset.py
 │   │   └── visualize_annotations.py
 │   ├── datasets/
