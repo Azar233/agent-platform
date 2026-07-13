@@ -223,18 +223,27 @@ async def chat_stream(
         raise HTTPException(status_code=400, detail="附件路径格式无效")
 
     session = _session_or_404(db, current_user.id, session_uuid)
-    history = [
-        {"role": item.role, "content": item.content}
-        for item in session.messages
-        if item.role in {"user", "assistant"}
-    ][-20:]
+    history = []
+    for item in session.messages:
+        if item.role not in {"user", "assistant"}:
+            continue
+        content = item.content
+        # 把历史附件路径也拼进上下文，否则 LLM 在多轮对话中看不到之前的附件
+        if item.role == "user" and item.tool_calls:
+            historical_paths = item.tool_calls.get("attachment_paths") or []
+            if historical_paths:
+                content += "\n\n本次附件路径：\n" + "\n".join(
+                    f"- {p}" for p in historical_paths
+                )
+        history.append({"role": item.role, "content": content})
+    history = history[-20:]
     db.add(
         ChatMessage(
             session_id=session.id,
             role="user",
             content=message,
             agent_used="detection",
-            tool_calls={"attachments": attachment_names},
+            tool_calls={"attachments": attachment_names, "attachment_paths": attachment_paths},
         )
     )
     db.flush()
