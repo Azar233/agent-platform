@@ -225,7 +225,39 @@ class DetectionStatistics(ProjectBaseModel):
 
 
 # ══════════════════════════════════════════════════════════════
-# 三、模型管理
+# 三、商品价格
+# ══════════════════════════════════════════════════════════════
+
+class ProductPriceCreate(ProjectBaseModel):
+    """创建/更新商品价格"""
+    category_id: int = Field(..., description="检测类别 ID")
+    sku_name: Optional[str] = Field(None, description="SKU 英文名")
+    name: Optional[str] = Field(None, description="商品中文名")
+    barcode: Optional[str] = Field(None, description="商品条码")
+    unit_price: float = Field(..., ge=0, description="单价（元）")
+    currency: str = Field(default="CNY", description="货币")
+
+
+class ProductPriceResponse(ProjectBaseModel):
+    """商品价格响应"""
+    id: int
+    category_id: int
+    sku_name: Optional[str] = None
+    name: Optional[str] = None
+    barcode: Optional[str] = None
+    unit_price: float
+    currency: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# 四、模型管理
 # ══════════════════════════════════════════════════════════════
 
 # --- 训练任务 ---

@@ -7,6 +7,7 @@
   模型管理：training_tasks, training_metrics, model_versions
   智能体：  chat_sessions, chat_messages
   系统运维：operation_logs
+  商品价格：product_prices
 """
 from datetime import datetime
 
@@ -392,3 +393,22 @@ class OperationLog(Base):
 
     # 关联
     user = relationship("User", back_populates="operation_logs")
+
+
+# ══════════════════════════════════════════════════════════════
+# 六、商品价格
+# ══════════════════════════════════════════════════════════════
+
+class ProductPrice(Base):
+    """商品价格表 — 每个 category_id 对应一个 SKU 的单价"""
+    __tablename__ = "product_prices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    category_id = Column(Integer, unique=True, nullable=False, index=True, comment="检测类别 ID，对应 instances_train2019.json")
+    sku_name = Column(String(100), nullable=True, comment="SKU 英文名")
+    name = Column(String(100), nullable=True, comment="商品中文名")
+    barcode = Column(String(50), nullable=True, comment="商品条码")
+    unit_price = Column(Float, nullable=False, default=0.0, comment="单价（元）")
+    currency = Column(String(10), default="CNY", comment="货币")
+    created_at = Column(DateTime, default=datetime.now, comment="创建时间")
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="更新时间")
