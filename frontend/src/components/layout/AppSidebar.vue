@@ -49,7 +49,6 @@ import {
   Cpu,
   Clock,
   DataAnalysis,
-  ShoppingCart,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -66,9 +65,11 @@ const activeMenu = computed(() => {
   return '/' + route.path.split('/')[1]
 })
 
-/** 侧边栏菜单配置 */
+/** 侧边栏菜单配置。
+ * title 用于桌面端侧边栏，shortTitle 用于手机端底部导航。
+ * 注意：main 分支已将 /checkout 拆分为独立 Vite 应用，开发者后台不再包含该路由。
+ */
 const menuItems = [
-  { path: '/checkout', title: '顾客结算端', shortTitle: '结算', icon: ShoppingCart },
   { path: '/detection', title: '检测工作台', shortTitle: '检测', icon: Camera },
   { path: '/chat', title: '智能对话', shortTitle: '对话', icon: ChatDotRound },
   { path: '/training', title: '模型训练', shortTitle: '训练', icon: Cpu },
