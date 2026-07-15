@@ -11,19 +11,47 @@
         </el-button>
       </div>
 
+      <div class="table-toolbar">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索商品中文名或条码"
+          clearable
+          style="width: 300px"
+          @keyup.enter="handleSearch"
+          @clear="handleSearch"
+        >
+          <template #append>
+            <el-button :icon="Search" @click="handleSearch" />
+          </template>
+        </el-input>
+        <el-button
+          type="danger"
+          :icon="Delete"
+          :disabled="!selectedRows.length"
+          @click="handleBatchDelete"
+        >
+          批量删除{{ selectedRows.length ? ` (${selectedRows.length})` : '' }}
+        </el-button>
+      </div>
+
       <el-table
+        ref="tableRef"
+        @selection-change="handleSelectionChange"
+        @sort-change="handleSortChange"
         v-loading="loading"
-        :data="priceList"
+        :data="paginatedPriceList"
+        row-key="category_id"
         stripe
         border
         style="width: 100%"
         :default-sort="{ prop: 'category_id', order: 'ascending' }"
       >
-        <el-table-column prop="category_id" label="类别 ID" sortable width="110" />
+        <el-table-column type="selection" width="55" align="center" />
+        <el-table-column prop="category_id" label="类别 ID" sortable="custom" width="110" />
         <el-table-column prop="sku_name" label="SKU 英文名" min-width="140" show-overflow-tooltip />
         <el-table-column prop="name" label="商品中文名" min-width="160" show-overflow-tooltip />
         <el-table-column prop="barcode" label="条码" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="unit_price" label="单价" sortable width="120">
+        <el-table-column prop="unit_price" label="单价" sortable="custom" width="120">
           <template #default="{ row }">
             {{ formatPrice(row.unit_price) }}
           </template>
@@ -43,6 +71,18 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <footer class="pagination-row">
+        <span>共 {{ priceList.length }} 条记录，每页 {{ PAGE_SIZE }} 条</span>
+        <el-pagination
+          v-model:current-page="currentPage"
+          :page-size="PAGE_SIZE"
+          :total="priceList.length"
+          background
+          layout="prev, pager, next"
+          @current-change="handlePageChange"
+        />
+      </footer>
     </el-card>
 
     <el-dialog
@@ -110,14 +150,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Edit, Plus } from '@element-plus/icons-vue'
+import { Delete, Edit, Plus, Search } from '@element-plus/icons-vue'
 import {
   getPricesApi,
   createPriceApi,
   updatePriceApi,
   deletePriceApi,
+  batchDeletePricesApi,
 } from '@/api/prices'
 
 const loading = ref(false)
@@ -126,6 +167,29 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editingCategoryId = ref(null)
 const priceList = ref([])
+const searchKeyword = ref('')
+const selectedRows = ref([])
+const tableRef = ref(null)
+const currentPage = ref(1)
+const PAGE_SIZE = 10
+const sortState = ref({ prop: 'category_id', order: 'ascending' })
+
+const sortedPriceList = computed(() => {
+  const { prop, order } = sortState.value
+  if (!prop || !order) return priceList.value
+
+  const direction = order === 'descending' ? -1 : 1
+  return [...priceList.value].sort((left, right) => {
+    const leftValue = Number(left[prop] ?? 0)
+    const rightValue = Number(right[prop] ?? 0)
+    return (leftValue - rightValue) * direction
+  })
+})
+
+const paginatedPriceList = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return sortedPriceList.value.slice(start, start + PAGE_SIZE)
+})
 
 const formRef = ref(null)
 const form = ref({
@@ -156,12 +220,41 @@ function formatTime(value) {
 async function fetchPrices() {
   loading.value = true
   try {
-    priceList.value = await getPricesApi()
+    priceList.value = await getPricesApi(searchKeyword.value)
+    const lastPage = Math.max(1, Math.ceil(priceList.value.length / PAGE_SIZE))
+    currentPage.value = Math.min(currentPage.value, lastPage)
   } catch {
     priceList.value = []
+    currentPage.value = 1
   } finally {
+    selectedRows.value = []
     loading.value = false
   }
+}
+
+function handleSearch() {
+  currentPage.value = 1
+  clearSelection()
+  fetchPrices()
+}
+
+function handleSelectionChange(rows) {
+  selectedRows.value = rows
+}
+
+function clearSelection() {
+  selectedRows.value = []
+  tableRef.value?.clearSelection()
+}
+
+function handlePageChange() {
+  clearSelection()
+}
+
+function handleSortChange({ prop, order }) {
+  sortState.value = { prop, order }
+  currentPage.value = 1
+  clearSelection()
 }
 
 function resetForm() {
@@ -255,6 +348,30 @@ async function handleDelete(row) {
   }
 }
 
+async function handleBatchDelete() {
+  const ids = selectedRows.value.map((row) => row.category_id)
+  if (!ids.length) return
+
+  try {
+    await ElMessageBox.confirm(
+      `确定批量删除选中的 ${ids.length} 个商品吗？删除后结算端将无法计价这些商品。`,
+      '批量删除确认',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+
+  try {
+    await batchDeletePricesApi(ids)
+    ElMessage.success('批量删除成功')
+    selectedRows.value = []
+    await fetchPrices()
+  } catch {
+    // 错误已由 request 拦截器提示
+  }
+}
+
 onMounted(() => {
   fetchPrices()
 })
@@ -285,6 +402,15 @@ onMounted(() => {
       color: #6b7280;
       font-size: 13px;
     }
+  }
+
+  .table-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
   }
 
   .table-actions {
@@ -328,6 +454,27 @@ onMounted(() => {
         box-shadow: 0 4px 12px rgba(207, 63, 79, .16);
       }
     }
+  }
+
+  .pagination-row {
+    min-height: 64px;
+    padding: 12px 4px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+
+    > span {
+      color: var(--vp-muted);
+      font-size: 12px;
+    }
+  }
+}
+
+@media (max-width: 720px) {
+  .price-management-page .pagination-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

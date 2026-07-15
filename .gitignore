@@ -111,7 +111,12 @@ yarn.lock
 
 # 前端构建产物
 dist/
+dev-dist/
 build/
+
+# 本地一键启停脚本（个人开发环境配置）
+start-dev.*
+stop-dev.*
 .cache/
 .output/
 .nuxt/
