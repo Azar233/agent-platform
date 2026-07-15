@@ -52,6 +52,12 @@ const routes = [
         meta: { title: '数据看板', icon: 'DataAnalysis' },
       },
       {
+        path: 'settings',
+        name: 'Settings',
+        component: () => import('@/views/SettingsPage.vue'),
+        meta: { title: '账号设置', icon: 'Setting' },
+      },
+      {
         path: 'checkout',
         name: 'CustomerCheckout',
         component: () => import('@/views/CustomerCheckoutPage.vue'),
