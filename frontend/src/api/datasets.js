@@ -20,6 +20,10 @@ export function deriveDatasetVersionApi(datasetId, data) {
   return request.post(`/datasets/${datasetId}/derive`, data, { timeout: 0 })
 }
 
+export function deriveDatasetVersionTaskApi(datasetId, data) {
+  return request.post(`/datasets/${datasetId}/derive-task`, data)
+}
+
 export function addDatasetProductApi(datasetId, formData) {
   return request.post(`/datasets/${datasetId}/products`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -38,6 +42,10 @@ export function commitDatasetProductApi(datasetId, data) {
   return request.post(`/datasets/${datasetId}/products/commit`, data, { timeout: 0 })
 }
 
+export function commitDatasetProductTaskApi(datasetId, data) {
+  return request.post(`/datasets/${datasetId}/products/commit-task`, data)
+}
+
 export function discardDatasetProductStageApi(datasetId, stagingToken) {
   return request.delete(`/datasets/${datasetId}/products/stage/${stagingToken}`)
 }
@@ -46,6 +54,12 @@ export function deleteDatasetProductApi(datasetId, productId, deactivateProduct 
   return request.delete(`/datasets/${datasetId}/products/${productId}`, {
     data: { deactivate_product: deactivateProduct },
     timeout: 0,
+  })
+}
+
+export function deleteDatasetProductTaskApi(datasetId, productId, deactivateProduct = true) {
+  return request.post(`/datasets/${datasetId}/products/${productId}/delete-task`, {
+    deactivate_product: deactivateProduct,
   })
 }
 
@@ -75,4 +89,12 @@ export function archiveDatasetVersionApi(datasetId) {
 
 export function deleteDatasetVersionApi(datasetId) {
   return request.delete(`/datasets/${datasetId}`)
+}
+
+export function deleteDatasetVersionTaskApi(datasetId) {
+  return request.post(`/datasets/${datasetId}/delete-task`)
+}
+
+export function getDatasetOperationStatusApi(taskId) {
+  return request.get(`/datasets/operations/${taskId}`, { skipGlobalError: true })
 }

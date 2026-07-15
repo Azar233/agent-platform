@@ -40,6 +40,7 @@ from app.config.settings import settings
 from app.core.logger import get_logger
 from app.database.session import SessionLocal
 from app.entity.db_models import ModelVersion, TrainingMetric, TrainingTask
+from app.services.model_version_service import model_version_service
 
 logger = get_logger(__name__)
 
@@ -888,6 +889,22 @@ class TrainingService:
             if results_monitor is not None:
                 results_monitor.join(timeout=10)
             TrainingService._parse_final_results(db, task_id, task_uuid, output_dir)
+            task = db.query(TrainingTask).filter(TrainingTask.id == task_id).first()
+            if task is not None:
+                try:
+                    registered_model = model_version_service.register_training_output(
+                        db,
+                        task=task,
+                        weights_path=_best_weights_path(task_uuid),
+                    )
+                    if registered_model is not None:
+                        _append_task_log(
+                            task_uuid,
+                            f"model version auto-registered\nmodel_version_id={registered_model.id}",
+                        )
+                except Exception as exc:  # noqa: BLE001 - training result remains valid.
+                    logger.error("训练完成但模型版本自动登记失败 | task=%s error=%s", task_uuid, exc)
+                    _append_task_log(task_uuid, f"model version registration failed | error={exc}")
             _set_live_progress(
                 task_uuid,
                 _build_tqdm_progress(
@@ -1406,6 +1423,15 @@ class TrainingService:
 
         best_weights = expected_run_dir / "weights" / "best.pt"
         last_weights = expected_run_dir / "weights" / "last.pt"
+        registered_model = (
+            model_version_service.register_training_output(
+                db,
+                task=task,
+                weights_path=best_weights,
+            )
+            if status == "completed" and best_weights.exists()
+            else None
+        )
         return {
             "message": "离线训练结果已导入",
             "task": TrainingService._serialize_task(task),
@@ -1415,6 +1441,11 @@ class TrainingService:
             "results_csv": str(results_csv),
             "best_weights": str(best_weights) if best_weights.exists() else None,
             "last_weights": str(last_weights) if last_weights.exists() else None,
+            "model_version": (
+                model_version_service.serialize(db, registered_model)
+                if registered_model is not None
+                else None
+            ),
         }
 
     @staticmethod
@@ -1560,26 +1591,35 @@ class TrainingService:
                 {"is_default": False}
             )
 
-        model_version = ModelVersion(
-            scene_id=task.scene_id,
-            training_task_id=task.id,
-            dataset_version_id=task.dataset_version_id,
-            version=version_value,
-            model_name=f"{task.model_name}_{task.task_uuid}",
-            model_type=task.model_name,
-            status="active",
-            model_path=str(exported_weights),
-            minio_url=None,
-            map50=_safe_float(overall.get("map50")),
-            map50_95=_safe_float(overall.get("map50_95")),
-            precision=_safe_float(overall.get("precision")),
-            recall=_safe_float(overall.get("recall")),
-            per_class_ap=report.get("per_class_ap") or None,
-            description=description,
-            file_size=exported_weights.stat().st_size,
-            is_default=set_default,
+        model_version = (
+            db.query(ModelVersion)
+            .filter(ModelVersion.training_task_id == task.id)
+            .order_by(ModelVersion.id)
+            .first()
         )
-        db.add(model_version)
+        if model_version is None:
+            model_version = ModelVersion(
+                scene_id=task.scene_id,
+                training_task_id=task.id,
+                status="active",
+                minio_url=None,
+            )
+            db.add(model_version)
+        model_version.dataset_version_id = task.dataset_version_id
+        model_version.version = version_value
+        model_version.model_name = f"{task.model_name}_{task.task_uuid}"
+        model_version.model_type = task.model_name
+        # Detection uses the best.pt produced by this exact training run.
+        # The exported copy remains an archive together with the report.
+        model_version.model_path = str(weights_path.resolve())
+        model_version.map50 = _safe_float(overall.get("map50"))
+        model_version.map50_95 = _safe_float(overall.get("map50_95"))
+        model_version.precision = _safe_float(overall.get("precision"))
+        model_version.recall = _safe_float(overall.get("recall"))
+        model_version.per_class_ap = report.get("per_class_ap") or None
+        model_version.description = description or model_version.description
+        model_version.file_size = weights_path.stat().st_size
+        model_version.is_default = set_default
         db.commit()
         db.refresh(model_version)
         _append_task_log(

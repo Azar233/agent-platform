@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
 from app.entity.db_models import (
+    DatasetAnnotation,
     DatasetClassMapping,
+    DatasetImage,
     DatasetVersion,
     DetectionScene,
 )
@@ -437,14 +439,54 @@ class DatasetService:
         return dataset
 
     @classmethod
-    def delete_draft(cls, db: Session, *, dataset_id: int) -> None:
+    def delete_draft(
+        cls,
+        db: Session,
+        *,
+        dataset_id: int,
+        progress_callback: Callable[[int, str], None] | None = None,
+    ) -> None:
+        if progress_callback is not None:
+            progress_callback(5, "正在检查草稿状态与派生关系")
         dataset = cls.get(db, dataset_id)
         if dataset.status != "draft" or dataset.is_current:
             raise DatasetLifecycleError("只能删除未启用的草稿数据集")
         if dataset.children:
             raise DatasetLifecycleError("存在派生版本，不能删除该草稿")
+        if progress_callback is not None:
+            progress_callback(10, "正在统计数据库中的图片与标注索引")
+        image_ids = [
+            row_id
+            for (row_id,) in db.query(DatasetImage.id)
+            .filter(DatasetImage.dataset_version_id == dataset.id)
+            .order_by(DatasetImage.id)
+            .all()
+        ]
+        batch_size = 250
+        total_images = max(1, len(image_ids))
+        for offset in range(0, len(image_ids), batch_size):
+            batch = image_ids[offset : offset + batch_size]
+            db.query(DatasetAnnotation).filter(DatasetAnnotation.dataset_image_id.in_(batch)).delete(
+                synchronize_session=False
+            )
+            db.query(DatasetImage).filter(DatasetImage.id.in_(batch)).delete(synchronize_session=False)
+            db.flush()
+            deleted_count = min(offset + len(batch), len(image_ids))
+            if progress_callback is not None:
+                progress_callback(
+                    12 + round(deleted_count / total_images * 63),
+                    f"正在删除图片与标注索引 {deleted_count}/{len(image_ids)}",
+                )
+        if progress_callback is not None:
+            progress_callback(78, "正在删除草稿版本与商品映射")
+        db.expire(dataset, ["images"])
         db.delete(dataset)
+        db.flush()
+        if progress_callback is not None:
+            progress_callback(85, "正在提交草稿删除结果")
         db.commit()
+        if progress_callback is not None:
+            progress_callback(100, "草稿已删除")
 
 
 dataset_service = DatasetService()

@@ -16,6 +16,72 @@
       </div>
     </div>
 
+    <section class="panel detection-model-panel">
+      <div class="panel-header">
+        <div>
+          <span>检测使用版本</span>
+          <small>图片、视频和实时检测统一使用场景当前选中的 best.pt</small>
+        </div>
+        <el-button text :icon="Refresh" :loading="loadingModelVersions" @click="fetchModelVersions">
+          刷新版本
+        </el-button>
+      </div>
+
+      <div class="model-version-selector">
+        <el-select
+          v-model="selectedModelVersionId"
+          filterable
+          placeholder="选择要用于检测的模型版本"
+          :loading="loadingModelVersions"
+        >
+          <el-option
+            v-for="item in modelVersionList"
+            :key="item.id"
+            :label="modelVersionOptionLabel(item)"
+            :value="item.id"
+            :disabled="!item.file_exists"
+          />
+        </el-select>
+        <el-button
+          type="primary"
+          :loading="switchingModelVersionId === selectedModelVersionId"
+          :disabled="!selectedModelVersion || selectedModelVersion.is_default || !selectedModelVersion.file_exists"
+          @click="switchDetectionModel"
+        >
+          {{ selectedModelVersion?.is_default ? '当前检测版本' : '切换检测版本' }}
+        </el-button>
+      </div>
+
+      <div v-if="selectedModelVersion" class="model-version-detail">
+        <div class="model-version-main">
+          <div>
+            <span>模型版本</span>
+            <strong>{{ selectedModelVersion.version }}</strong>
+          </div>
+          <el-tag :type="selectedModelVersion.is_default ? 'success' : 'info'" effect="plain">
+            {{ selectedModelVersion.is_default ? '检测使用中' : '可切换' }}
+          </el-tag>
+        </div>
+        <div class="model-version-grid">
+          <div><span>所属场景</span><strong>{{ selectedModelVersion.scene_name || `#${selectedModelVersion.scene_id}` }}</strong></div>
+          <div><span>数据集版本</span><strong>{{ selectedModelVersion.dataset_version || 'Legacy 未登记' }}</strong></div>
+          <div><span>训练任务</span><strong>{{ selectedModelVersion.training_task_uuid || '内置正式模型' }}</strong></div>
+          <div><span>模型大小</span><strong>{{ formatFileSize(selectedModelVersion.file_size) }}</strong></div>
+          <div><span>训练参数</span><strong>{{ modelParameterSummary(selectedModelVersion) }}</strong></div>
+          <div><span>训练结果</span><strong>{{ modelResultSummary(selectedModelVersion) }}</strong></div>
+        </div>
+        <div class="model-path-row">
+          <span>best.pt</span>
+          <code>{{ selectedModelVersion.model_path }}</code>
+          <el-tag size="small" :type="selectedModelVersion.file_exists ? 'success' : 'danger'">
+            {{ selectedModelVersion.file_exists ? '文件可用' : '文件缺失' }}
+          </el-tag>
+        </div>
+        <p v-if="selectedModelVersion.description" class="model-description">{{ selectedModelVersion.description }}</p>
+      </div>
+      <el-empty v-else-if="!loadingModelVersions" description="暂无可用的检测模型" />
+    </section>
+
     <section class="panel dataset-version-panel">
       <div class="panel-header">
         <div>
@@ -627,12 +693,14 @@ import {
   downloadTrainingModelApi,
   downloadTrainingResultsApi,
   exportTrainingModelApi,
+  getDetectionModelVersionsApi,
   getTrainingLogApi,
   getTrainingMetricsApi,
   getTrainingStatusApi,
   getTrainingTasksApi,
   importTrainingRunApi,
   predictTrainingImageApi,
+  setDefaultDetectionModelApi,
   startTrainingApi,
   stopTrainingApi,
   validateTrainingTaskApi,
@@ -643,6 +711,10 @@ echarts.use([TitleComponent, TooltipComponent, LegendComponent, GridComponent, L
 
 const taskList = ref([])
 const loadingTasks = ref(false)
+const modelVersionList = ref([])
+const loadingModelVersions = ref(false)
+const selectedModelVersionId = ref(null)
+const switchingModelVersionId = ref(null)
 const datasetList = ref([])
 const loadingDatasets = ref(false)
 const selectedTask = ref(null)
@@ -743,6 +815,9 @@ const selectedTrainDataset = computed(() =>
 )
 const selectedImportDataset = computed(() =>
   datasetList.value.find((dataset) => dataset.id === importForm.value.dataset_version_id)
+)
+const selectedModelVersion = computed(() =>
+  modelVersionList.value.find((model) => model.id === selectedModelVersionId.value) || null
 )
 
 const metricCards = computed(() => {
@@ -870,6 +945,30 @@ function formatPercent(value) {
   return value == null ? '-' : `${(Number(value) * 100).toFixed(1)}%`
 }
 
+function formatFileSize(value) {
+  const bytes = Number(value || 0)
+  if (!bytes) return '-'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  return `${(bytes / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`
+}
+
+function modelVersionOptionLabel(model) {
+  return `${model.scene_name || `场景 #${model.scene_id}`} · ${model.version} · ${model.dataset_version || '未绑定数据集'}`
+}
+
+function modelParameterSummary(model) {
+  const params = model.training_parameters
+  if (!params) return '历史正式参数未登记'
+  return `${params.model_name} · ${params.epochs} epochs · imgsz ${params.img_size} · batch ${params.batch_size} · ${params.optimizer}`
+}
+
+function modelResultSummary(model) {
+  const result = model.training_result
+  if (!result) return '历史正式结果未登记'
+  return `mAP50 ${formatPercent(result.map50)} · mAP50-95 ${formatPercent(result.map50_95)} · P ${formatPercent(result.precision)} · R ${formatPercent(result.recall)}`
+}
+
 function formatTime(value) {
   if (!value) return '-'
   const date = new Date(value)
@@ -907,6 +1006,46 @@ async function fetchTasks() {
     taskList.value = []
   } finally {
     loadingTasks.value = false
+  }
+}
+
+async function fetchModelVersions() {
+  loadingModelVersions.value = true
+  try {
+    const response = await getDetectionModelVersionsApi()
+    modelVersionList.value = response.items || []
+    const selectedStillExists = modelVersionList.value.some((item) => item.id === selectedModelVersionId.value)
+    if (!selectedStillExists) {
+      selectedModelVersionId.value = (
+        modelVersionList.value.find((item) => item.is_default)?.id
+        || modelVersionList.value[0]?.id
+        || null
+      )
+    }
+  } catch {
+    modelVersionList.value = []
+    selectedModelVersionId.value = null
+  } finally {
+    loadingModelVersions.value = false
+  }
+}
+
+async function switchDetectionModel() {
+  const model = selectedModelVersion.value
+  if (!model || model.is_default || !model.file_exists) return
+  await ElMessageBox.confirm(
+    `确定将 ${model.version} 设为场景“${model.scene_name || model.scene_id}”的检测使用版本吗？`,
+    '切换检测模型',
+    { type: 'warning', confirmButtonText: '切换', cancelButtonText: '取消' },
+  )
+  switchingModelVersionId.value = model.id
+  try {
+    await setDefaultDetectionModelApi(model.id)
+    ElMessage.success(`检测模型已切换为 ${model.version}`)
+    await fetchModelVersions()
+    selectedModelVersionId.value = model.id
+  } finally {
+    switchingModelVersionId.value = null
   }
 }
 
@@ -988,7 +1127,7 @@ async function refreshSelectedTask() {
   liveProgress.value = statusRes.live_progress || null
   updateCharts(metricsRes.metrics || [])
   if (selectedTask.value.status !== previousStatus) {
-    await fetchTrainingDatasets()
+    await Promise.all([fetchTrainingDatasets(), fetchModelVersions()])
   }
 }
 
@@ -1083,7 +1222,7 @@ async function createTask() {
     const task = await startTrainingApi(payload)
     ElMessage.success(`训练任务已创建：${task.task_uuid}`)
     showCreateDialog.value = false
-    await Promise.all([fetchTasks(), fetchTrainingDatasets()])
+    await Promise.all([fetchTasks(), fetchTrainingDatasets(), fetchModelVersions()])
     const created = taskList.value.find((item) => item.id === task.id)
     await selectTask(created || task)
   } finally {
@@ -1106,7 +1245,7 @@ async function submitImportRun() {
     const result = await importTrainingRunApi(payload)
     ElMessage.success(`已导入 ${result.metrics_imported || 0} 个 epoch 指标`)
     showImportDialog.value = false
-    await Promise.all([fetchTasks(), fetchTrainingDatasets()])
+    await Promise.all([fetchTasks(), fetchTrainingDatasets(), fetchModelVersions()])
     if (result.task) await selectTask(result.task)
   } finally {
     importing.value = false
@@ -1180,9 +1319,11 @@ async function submitExport() {
   if (!exportTask.value) return
   exporting.value = true
   try {
-    await exportTrainingModelApi(exportTask.value.id, { ...exportForm.value })
+    const result = await exportTrainingModelApi(exportTask.value.id, { ...exportForm.value })
     ElMessage.success('模型版本已导出')
     showExportDialog.value = false
+    await fetchModelVersions()
+    if (result.model_version?.id) selectedModelVersionId.value = result.model_version.id
   } finally {
     exporting.value = false
   }
@@ -1286,6 +1427,7 @@ function resizeCharts() {
 onMounted(() => {
   fetchTasks()
   fetchTrainingDatasets()
+  fetchModelVersions()
   window.addEventListener('resize', resizeCharts)
 })
 
@@ -1364,6 +1506,106 @@ onBeforeUnmount(() => {
     font-size: 12px;
     font-weight: 400;
   }
+}
+
+.detection-model-panel {
+  background: linear-gradient(135deg, rgba(47, 111, 223, 0.06), $surface-color 42%);
+}
+
+.model-version-selector {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+
+  .el-select {
+    width: 100%;
+  }
+}
+
+.model-version-detail {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid #d9e5fb;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.model-version-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+
+  span,
+  strong {
+    display: block;
+  }
+
+  span {
+    color: $text-secondary;
+    font-size: 12px;
+  }
+
+  strong {
+    margin-top: 4px;
+    font-size: 20px;
+  }
+}
+
+.model-version-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+
+  > div {
+    min-width: 0;
+    padding: 10px 12px;
+    border-radius: 9px;
+    background: $surface-muted;
+  }
+
+  span,
+  strong {
+    display: block;
+  }
+
+  span {
+    color: $text-secondary;
+    font-size: 11px;
+  }
+
+  strong {
+    margin-top: 5px;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+}
+
+.model-path-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: $text-secondary;
+  font-size: 12px;
+
+  code {
+    min-width: 0;
+    overflow: hidden;
+    color: #42526e;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.model-description {
+  margin: 10px 0 0;
+  color: $text-secondary;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .dataset-version-panel {
@@ -1688,6 +1930,10 @@ onBeforeUnmount(() => {
   .predict-layout {
     grid-template-columns: 1fr;
   }
+
+  .model-version-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -1702,6 +1948,12 @@ onBeforeUnmount(() => {
     h2 {
       font-size: 30px;
     }
+  }
+
+  .model-version-selector,
+  .model-version-grid,
+  .model-path-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

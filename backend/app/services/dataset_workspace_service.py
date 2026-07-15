@@ -9,7 +9,7 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 from sqlalchemy import func
@@ -37,6 +37,11 @@ SPLITS = ("train", "val", "test")
 
 
 class DatasetWorkspaceService:
+    @staticmethod
+    def _report(progress_callback: Callable[[int, str], None] | None, progress: int, message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(max(0, min(100, int(progress))), message)
+
     @staticmethod
     def _local_root(dataset: DatasetVersion) -> Path:
         root = dataset_service._resolve_local_path(dataset.storage_path)
@@ -119,7 +124,11 @@ class DatasetWorkspaceService:
         return digest.hexdigest()
 
     @classmethod
-    def _content_hash(cls, root: Path) -> str:
+    def _content_hash(
+        cls,
+        root: Path,
+        progress_callback: Callable[[int, str], None] | None = None,
+    ) -> str:
         digest = hashlib.sha256()
         candidates: list[Path] = []
         for split in SPLITS:
@@ -130,10 +139,16 @@ class DatasetWorkspaceService:
             candidates.extend((root / "labels" / split).glob("*.txt"))
         if (root / "data.yaml").is_file():
             candidates.append(root / "data.yaml")
-        for path in sorted(candidates, key=lambda item: item.as_posix()):
+        sorted_candidates = sorted(candidates, key=lambda item: item.as_posix())
+        for index, path in enumerate(sorted_candidates, 1):
             relative = path.relative_to(root).as_posix().encode("utf-8")
             digest.update(relative)
             digest.update(bytes.fromhex(cls._hash_file(path)))
+            cls._report(
+                progress_callback,
+                91 + round(index / max(1, len(sorted_candidates)) * 5),
+                f"正在计算数据集内容指纹 {index}/{len(sorted_candidates)}",
+            )
         return f"sha256:{digest.hexdigest()}"
 
     @staticmethod
@@ -157,78 +172,116 @@ class DatasetWorkspaceService:
         )
 
     @classmethod
-    def scan(cls, db: Session, dataset: DatasetVersion) -> DatasetVersion:
+    def scan(
+        cls,
+        db: Session,
+        dataset: DatasetVersion,
+        progress_callback: Callable[[int, str], None] | None = None,
+    ) -> DatasetVersion:
         root = cls._local_root(dataset)
         mappings = {item.class_index: item for item in dataset.classes}
         if not mappings or any(item.product_id is None for item in mappings.values()):
             raise DatasetLifecycleError("所有类别必须关联稳定 product_id 后才能扫描")
 
-        dataset.images.clear()
-        db.flush()
+        cls._report(progress_callback, 2, "正在统计旧的图片与标注索引")
+        old_image_ids = [
+            row_id
+            for (row_id,) in db.query(DatasetImage.id)
+            .filter(DatasetImage.dataset_version_id == dataset.id)
+            .order_by(DatasetImage.id)
+            .all()
+        ]
+        delete_batch_size = 250
+        total_old_images = max(1, len(old_image_ids))
+        for offset in range(0, len(old_image_ids), delete_batch_size):
+            batch = old_image_ids[offset : offset + delete_batch_size]
+            db.query(DatasetAnnotation).filter(DatasetAnnotation.dataset_image_id.in_(batch)).delete(
+                synchronize_session=False
+            )
+            db.query(DatasetImage).filter(DatasetImage.id.in_(batch)).delete(synchronize_session=False)
+            db.flush()
+            deleted_count = min(offset + len(batch), len(old_image_ids))
+            cls._report(
+                progress_callback,
+                3 + round(deleted_count / total_old_images * 22),
+                f"正在清理旧索引 {deleted_count}/{len(old_image_ids)}",
+            )
+        db.expire(dataset, ["images"])
+        cls._report(progress_callback, 26, "旧索引已清理，正在读取数据集文件")
         image_counts = {split: 0 for split in SPLITS}
         annotation_counts = {split: 0 for split in SPLITS}
         manifest_images: list[dict[str, Any]] = []
 
+        image_items: list[tuple[str, Path, Path]] = []
         for split in SPLITS:
             image_dir = root / "images" / split
             label_dir = root / "labels" / split
-            if not image_dir.is_dir():
-                continue
-            for image_path in sorted(image_dir.iterdir()):
-                if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_SUFFIXES:
-                    continue
-                label_path = label_dir / f"{image_path.stem}.txt"
-                checksum = cls._hash_file(image_path)
-                image_row = DatasetImage(
-                    dataset_version_id=dataset.id,
-                    split=split,
-                    relative_path=image_path.relative_to(root).as_posix(),
-                    label_relative_path=(label_path.relative_to(root).as_posix() if label_path.exists() else None),
-                    checksum=checksum,
-                    file_size=image_path.stat().st_size,
+            if image_dir.is_dir():
+                image_items.extend(
+                    (split, image_path, label_dir)
+                    for image_path in sorted(image_dir.iterdir())
+                    if image_path.is_file() and image_path.suffix.lower() in IMAGE_SUFFIXES
                 )
-                db.add(image_row)
-                db.flush()
-                annotation_items = []
-                if label_path.is_file():
-                    for line_number, raw_line in enumerate(label_path.read_text(encoding="utf-8").splitlines(), 1):
-                        line = raw_line.strip()
-                        if not line:
-                            continue
-                        parts = line.split()
-                        if len(parts) != 5:
-                            raise DatasetLifecycleError(f"无效标注: {label_path}:{line_number}")
-                        class_index = int(parts[0])
-                        mapping = mappings.get(class_index)
-                        if mapping is None:
-                            raise DatasetLifecycleError(f"标注类别 {class_index} 没有商品映射: {label_path}")
-                        coords = [float(value) for value in parts[1:]]
-                        db.add(
-                            DatasetAnnotation(
-                                dataset_image_id=image_row.id,
-                                product_id=mapping.product_id,
-                                class_index=class_index,
-                                x_center=coords[0],
-                                y_center=coords[1],
-                                width=coords[2],
-                                height=coords[3],
-                                source="imported",
-                            )
+        total_images = max(1, len(image_items))
+
+        for image_number, (split, image_path, label_dir) in enumerate(image_items, 1):
+            label_path = label_dir / f"{image_path.stem}.txt"
+            checksum = cls._hash_file(image_path)
+            image_row = DatasetImage(
+                dataset_version_id=dataset.id,
+                split=split,
+                relative_path=image_path.relative_to(root).as_posix(),
+                label_relative_path=(label_path.relative_to(root).as_posix() if label_path.exists() else None),
+                checksum=checksum,
+                file_size=image_path.stat().st_size,
+            )
+            db.add(image_row)
+            db.flush()
+            annotation_items = []
+            if label_path.is_file():
+                for line_number, raw_line in enumerate(label_path.read_text(encoding="utf-8").splitlines(), 1):
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) != 5:
+                        raise DatasetLifecycleError(f"无效标注: {label_path}:{line_number}")
+                    class_index = int(parts[0])
+                    mapping = mappings.get(class_index)
+                    if mapping is None:
+                        raise DatasetLifecycleError(f"标注类别 {class_index} 没有商品映射: {label_path}")
+                    coords = [float(value) for value in parts[1:]]
+                    db.add(
+                        DatasetAnnotation(
+                            dataset_image_id=image_row.id,
+                            product_id=mapping.product_id,
+                            class_index=class_index,
+                            x_center=coords[0],
+                            y_center=coords[1],
+                            width=coords[2],
+                            height=coords[3],
+                            source="imported",
                         )
-                        annotation_items.append(
-                            {"product_id": mapping.product_id, "class_index": class_index, "bbox": coords}
-                        )
-                        annotation_counts[split] += 1
-                image_counts[split] += 1
-                manifest_images.append(
-                    {
-                        "split": split,
-                        "path": image_row.relative_path,
-                        "label_path": image_row.label_relative_path,
-                        "sha256": checksum,
-                        "annotations": annotation_items,
-                    }
-                )
+                    )
+                    annotation_items.append(
+                        {"product_id": mapping.product_id, "class_index": class_index, "bbox": coords}
+                    )
+                    annotation_counts[split] += 1
+            image_counts[split] += 1
+            manifest_images.append(
+                {
+                    "split": split,
+                    "path": image_row.relative_path,
+                    "label_path": image_row.label_relative_path,
+                    "sha256": checksum,
+                    "annotations": annotation_items,
+                }
+            )
+            cls._report(
+                progress_callback,
+                28 + round(image_number / total_images * 62),
+                f"正在扫描图片与标注 {image_number}/{len(image_items)}",
+            )
 
         dataset.class_count = len(mappings)
         dataset.train_image_count = image_counts["train"]
@@ -238,7 +291,7 @@ class DatasetWorkspaceService:
         dataset.val_annotation_count = annotation_counts["val"]
         dataset.test_annotation_count = annotation_counts["test"]
         dataset.manifest_path = "manifest.json"
-        dataset.content_hash = cls._content_hash(root)
+        dataset.content_hash = cls._content_hash(root, progress_callback)
         dataset.validation_report = None
         dataset.validated_at = None
         manifest = {
@@ -258,12 +311,15 @@ class DatasetWorkspaceService:
             ],
             "images": manifest_images,
         }
+        cls._report(progress_callback, 97, "正在写入数据集清单")
         (root / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        cls._report(progress_callback, 99, "正在提交数据集索引")
         db.commit()
         db.refresh(dataset)
+        cls._report(progress_callback, 100, "数据集索引已更新")
         return dataset
 
     @classmethod
@@ -358,7 +414,9 @@ class DatasetWorkspaceService:
         name: str,
         description: str | None,
         user_id: int,
+        progress_callback: Callable[[int, str], None] | None = None,
     ) -> DatasetVersion:
+        cls._report(progress_callback, 2, "正在检查父版本与目标目录")
         parent = dataset_service.get(db, parent_id)
         if parent.status not in {"ready", "archived"}:
             raise DatasetLifecycleError("只能从已冻结的数据集派生新版本")
@@ -370,7 +428,33 @@ class DatasetWorkspaceService:
             raise DatasetConflictError(f"版本目录已存在: {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            shutil.copytree(source, target, ignore=shutil.ignore_patterns("*.cache"))
+            source_files = [
+                path
+                for path in source.rglob("*")
+                if path.is_file()
+                and not any(part.endswith(".cache") for part in path.relative_to(source).parts)
+            ]
+            total_files = max(1, len(source_files))
+            copied_files = 0
+
+            def copy_with_progress(source_path, target_path):
+                nonlocal copied_files
+                result = shutil.copy2(source_path, target_path)
+                copied_files += 1
+                cls._report(
+                    progress_callback,
+                    5 + round(copied_files / total_files * 60),
+                    f"正在复制数据集文件 {copied_files}/{len(source_files)}",
+                )
+                return result
+
+            shutil.copytree(
+                source,
+                target,
+                ignore=shutil.ignore_patterns("*.cache"),
+                copy_function=copy_with_progress,
+            )
+            cls._report(progress_callback, 68, "正在创建版本与商品映射")
             dataset = DatasetVersion(
                 scene_id=parent.scene_id,
                 parent_id=parent.id,
@@ -403,7 +487,15 @@ class DatasetWorkspaceService:
                 )
             db.flush()
             cls._write_data_yaml(target, list(dataset.classes))
-            return cls.scan(db, dataset)
+            return cls.scan(
+                db,
+                dataset,
+                progress_callback=lambda progress, message: cls._report(
+                    progress_callback,
+                    72 + round(progress * 0.26),
+                    message,
+                ),
+            )
         except Exception:
             db.rollback()
             shutil.rmtree(target, ignore_errors=True)
@@ -422,7 +514,9 @@ class DatasetWorkspaceService:
         class_name: str | None = None,
         barcode: str | None = None,
         product_key: str | None = None,
+        progress_callback: Callable[[int, str], None] | None = None,
     ) -> tuple[DatasetVersion, Product, int]:
+        cls._report(progress_callback, 2, "正在检查商品与数据集")
         dataset = dataset_service.get(db, dataset_id)
         if dataset.status != "draft":
             raise DatasetLifecycleError("只能修改派生草稿数据集")
@@ -478,6 +572,7 @@ class DatasetWorkspaceService:
 
         added = 0
         safe_key = re.sub(r"[^A-Za-z0-9._-]+", "_", product.product_key)
+        total_files = max(1, len(files))
         for sequence, (split, filename, content) in enumerate(files, 1):
             if split not in SPLITS:
                 raise DatasetLifecycleError(f"不支持的数据集分区: {split}")
@@ -517,8 +612,25 @@ class DatasetWorkspaceService:
                 encoding="utf-8",
             )
             added += 1
+            cls._report(
+                progress_callback,
+                4 + round(sequence / total_files * 8),
+                f"正在写入商品图片与标注 {sequence}/{len(files)}",
+            )
         cls._write_data_yaml(root, list(dataset.classes))
-        return cls.scan(db, dataset), product, added
+        return (
+            cls.scan(
+                db,
+                dataset,
+                progress_callback=lambda progress, message: cls._report(
+                    progress_callback,
+                    14 + round(progress * 0.84),
+                    message,
+                ),
+            ),
+            product,
+            added,
+        )
 
     @classmethod
     def delete_product(
@@ -528,7 +640,9 @@ class DatasetWorkspaceService:
         dataset_id: int,
         product_id: int,
         deactivate_product: bool,
+        progress_callback: Callable[[int, str], None] | None = None,
     ) -> tuple[DatasetVersion, int, int, int]:
+        cls._report(progress_callback, 2, "正在检查商品映射与数据集")
         dataset = dataset_service.get(db, dataset_id)
         if dataset.status != "draft":
             raise DatasetLifecycleError("只能修改派生草稿数据集")
@@ -540,12 +654,18 @@ class DatasetWorkspaceService:
         images_deleted = 0
         annotations_deleted = 0
 
+        labels_by_split: dict[str, list[Path]] = {}
+        total_labels = 0
         for split in SPLITS:
             label_dir = root / "labels" / split
+            labels = list(label_dir.glob("*.txt")) if label_dir.is_dir() else []
+            labels_by_split[split] = labels
+            total_labels += len(labels)
+        processed_labels = 0
+
+        for split in SPLITS:
             image_dir = root / "images" / split
-            if not label_dir.is_dir():
-                continue
-            for label_path in list(label_dir.glob("*.txt")):
+            for label_path in labels_by_split[split]:
                 lines = [line.strip() for line in label_path.read_text(encoding="utf-8").splitlines() if line.strip()]
                 parsed = [(int(line.split()[0]), line.split()) for line in lines]
                 hits = sum(class_id == deleted_index for class_id, _ in parsed)
@@ -556,6 +676,12 @@ class DatasetWorkspaceService:
                             image_path.unlink()
                             images_deleted += 1
                     label_path.unlink()
+                    processed_labels += 1
+                    cls._report(
+                        progress_callback,
+                        5 + round(processed_labels / max(1, total_labels) * 35),
+                        f"正在删除商品样本并重排标注 {processed_labels}/{total_labels}",
+                    )
                     continue
                 rewritten = []
                 for class_id, parts in parsed:
@@ -563,6 +689,12 @@ class DatasetWorkspaceService:
                         parts[0] = str(class_id - 1)
                     rewritten.append(" ".join(parts))
                 label_path.write_text(("\n".join(rewritten) + "\n") if rewritten else "", encoding="utf-8")
+                processed_labels += 1
+                cls._report(
+                    progress_callback,
+                    5 + round(processed_labels / max(1, total_labels) * 35),
+                    f"正在删除商品样本并重排标注 {processed_labels}/{total_labels}",
+                )
 
         # Remove the mapping from both the ORM collection and the database.
         # Calling db.delete(mapping) alone leaves the deleted object in the
@@ -577,8 +709,17 @@ class DatasetWorkspaceService:
         if product is not None and deactivate_product:
             product.is_active = False
         db.flush()
+        cls._report(progress_callback, 43, "正在更新类别映射与 data.yaml")
         cls._write_data_yaml(root, list(dataset.classes))
-        dataset = cls.scan(db, dataset)
+        dataset = cls.scan(
+            db,
+            dataset,
+            progress_callback=lambda progress, message: cls._report(
+                progress_callback,
+                45 + round(progress * 0.53),
+                message,
+            ),
+        )
         return dataset, images_deleted, annotations_deleted, sum(
             item.class_index >= deleted_index for item in dataset.classes
         )

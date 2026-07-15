@@ -31,6 +31,7 @@ from app.entity.db_models import (
     ProductPrice,
     TrainingTask,
 )
+from app.services.model_version_service import model_version_service
 
 logger = get_logger(__name__)
 
@@ -67,12 +68,7 @@ class DetectionService:
         return scene
 
     def _resolve_model(self, db, scene_id: int) -> tuple[Path, int | None]:
-        if settings.DETECTION_MODEL_PATH:
-            path = Path(settings.DETECTION_MODEL_PATH).expanduser().resolve()
-            if not path.is_file():
-                raise DetectionServiceError(f"DETECTION_MODEL_PATH 不存在: {path}")
-            return path, None
-
+        model_version_service.ensure_builtin(db, scene_id=scene_id)
         model_version = (
             db.query(ModelVersion)
             .filter(
@@ -83,8 +79,21 @@ class DetectionService:
             .order_by(ModelVersion.created_at.desc())
             .first()
         )
-        if model_version and Path(model_version.model_path).is_file():
-            return Path(model_version.model_path).resolve(), model_version.id
+        if model_version:
+            selected_path = Path(model_version.model_path).expanduser().resolve()
+            if not selected_path.is_file():
+                raise DetectionServiceError(
+                    f"当前检测模型 {model_version.version} 的文件不存在: {selected_path}"
+                )
+            return selected_path, model_version.id
+
+        # Keep the environment override as a compatibility fallback only.
+        # Once a model version is selected in the registry, that selection wins.
+        if settings.DETECTION_MODEL_PATH:
+            path = Path(settings.DETECTION_MODEL_PATH).expanduser().resolve()
+            if not path.is_file():
+                raise DetectionServiceError(f"DETECTION_MODEL_PATH 不存在: {path}")
+            return path, None
 
         task = (
             db.query(TrainingTask)

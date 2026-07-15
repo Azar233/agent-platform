@@ -7,7 +7,7 @@ const SPLIT_ALIASES = {
 }
 
 function relativePath(file) {
-  return String(file.webkitRelativePath || file.name || '').replaceAll('\\', '/')
+  return String(file?.webkitRelativePath || file?.name || '').replaceAll('\\', '/')
 }
 
 function explicitSplit(file) {
@@ -23,6 +23,22 @@ function explicitSplit(file) {
 
 function isImage(file) {
   return String(file.type || '').startsWith('image/') || IMAGE_SUFFIX_RE.test(file.name || '')
+}
+
+export function collectProductFolderFiles(fileList) {
+  const allFiles = Array.from(fileList || [])
+  const files = allFiles
+    .filter(isImage)
+    .sort((left, right) => relativePath(left).localeCompare(relativePath(right), undefined, { numeric: true }))
+  const firstPath = relativePath(files[0] || allFiles[0])
+
+  return {
+    files,
+    folderName: firstPath.split('/')[0] || '',
+    ignoredCount: allFiles.length - files.length,
+    totalBytes: files.reduce((sum, file) => sum + Number(file.size || 0), 0),
+    totalImages: files.length,
+  }
 }
 
 export function partitionProductFolderFiles(fileList) {

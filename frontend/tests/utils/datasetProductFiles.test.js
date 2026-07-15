@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { partitionProductFolderFiles } from '@/utils/datasetProductFiles'
+import { collectProductFolderFiles, partitionProductFolderFiles } from '@/utils/datasetProductFiles'
 
 function file(path, size = 100) {
   return {
@@ -45,5 +45,31 @@ describe('partitionProductFolderFiles', () => {
     expect(result.files.train).toHaveLength(1)
     expect(result.files.val).toHaveLength(0)
     expect(result.files.test).toHaveLength(0)
+  })
+})
+
+describe('collectProductFolderFiles', () => {
+  it('collects one folder without automatically splitting its images', () => {
+    const result = collectProductFolderFiles([
+      file('train/10.jpg', 30),
+      file('train/2.jpg', 20),
+      file('train/1.jpg', 10),
+    ])
+
+    expect(result.folderName).toBe('train')
+    expect(result.files.map((item) => item.name)).toEqual(['1.jpg', '2.jpg', '10.jpg'])
+    expect(result.totalImages).toBe(3)
+    expect(result.totalBytes).toBe(60)
+  })
+
+  it('ignores non-images and allows an empty selection', () => {
+    const textFile = { name: 'notes.txt', webkitRelativePath: 'val/notes.txt', type: 'text/plain', size: 20 }
+    const result = collectProductFolderFiles([textFile])
+    const empty = collectProductFolderFiles([])
+
+    expect(result.files).toEqual([])
+    expect(result.folderName).toBe('val')
+    expect(result.ignoredCount).toBe(1)
+    expect(empty).toMatchObject({ files: [], folderName: '', ignoredCount: 0, totalImages: 0 })
   })
 })

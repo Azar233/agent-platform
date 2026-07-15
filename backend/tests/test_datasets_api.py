@@ -181,8 +181,19 @@ def test_current_switch_archive_and_draft_delete(client, db_session):
         headers=headers,
         json={**_payload(scene.id, "v3"), "content_hash": None},
     ).json()
-    deleted = client.delete(f"/api/datasets/{draft['id']}", headers=headers)
-    assert deleted.status_code == 204
+    delete_task_response = client.post(f"/api/datasets/{draft['id']}/delete-task", headers=headers)
+    assert delete_task_response.status_code == 202
+    delete_task = delete_task_response.json()
+    delete_status_response = client.get(
+        f"/api/datasets/operations/{delete_task['task_id']}",
+        headers=headers,
+    )
+    assert delete_status_response.status_code == 200
+    delete_status = delete_status_response.json()
+    assert delete_status["status"] == "completed"
+    assert delete_status["progress"] == 100
+    assert delete_status["operation"] == "delete_draft"
+    assert delete_status["result"]["dataset_id"] == draft["id"]
 
     listing = client.get(f"/api/datasets?scene_id={scene.id}", headers=headers)
     assert listing.status_code == 200

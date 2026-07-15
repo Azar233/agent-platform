@@ -274,47 +274,52 @@
       :close-on-click-modal="false"
       @closed="handleAddProductClosed"
     >
-      <el-form :model="productForm" label-width="96px" class="product-setup-form">
+      <el-form ref="productFormRef" :model="productForm" :rules="productRules" label-width="96px" class="product-setup-form">
         <div class="product-setup-grid">
-          <el-form-item label="商品名称"><el-input v-model="productForm.name" :disabled="Boolean(annotationStage)" /></el-form-item>
-          <el-form-item label="类别名称"><el-input v-model="productForm.class_name" :disabled="Boolean(annotationStage)" placeholder="模型类别英文名" /></el-form-item>
-          <el-form-item label="价格"><el-input-number v-model="productForm.unit_price" :disabled="Boolean(annotationStage)" :min="0" :precision="2" /></el-form-item>
-          <el-form-item label="条形码"><el-input v-model="productForm.barcode" :disabled="Boolean(annotationStage)" clearable /></el-form-item>
+          <el-form-item label="商品名称" prop="name" required><el-input v-model="productForm.name" :disabled="Boolean(annotationStage)" /></el-form-item>
+          <el-form-item label="类别名称" prop="class_name" required><el-input v-model="productForm.class_name" :disabled="Boolean(annotationStage)" placeholder="模型类别英文名" /></el-form-item>
+          <el-form-item label="价格" prop="unit_price" required><el-input-number v-model="productForm.unit_price" :disabled="Boolean(annotationStage)" :min="0" :precision="2" /></el-form-item>
+          <el-form-item label="商品条码"><el-input v-model="productForm.barcode" :disabled="Boolean(annotationStage)" clearable /></el-form-item>
         </div>
-        <el-form-item label="图片文件夹">
-          <div class="folder-picker">
+        <div class="split-folder-grid">
+          <div
+            v-for="split in productSplitOptions"
+            :key="split.value"
+            class="split-folder-card"
+            :class="{ invalid: split.value === 'train' && trainFolderError }"
+          >
+            <div class="split-folder-heading">
+              <strong><span v-if="split.required" class="required-star">*</span>{{ split.label }}</strong>
+              <span>{{ split.required ? '必填' : '可选' }}</span>
+            </div>
             <label class="folder-select-button" :class="{ disabled: Boolean(annotationStage) }">
               <input
                 class="folder-input"
                 type="file"
                 accept="image/*"
-                aria-label="选择商品图片文件夹"
+                :aria-label="`选择${split.label}`"
                 webkitdirectory
                 directory
                 multiple
                 :disabled="Boolean(annotationStage)"
-                @change="setProductFolder"
+                @change="setProductSplitFolder(split.value, $event)"
               />
-              <span>{{ annotationStage ? '检测框审核期间不能更换文件夹' : '选择图片文件夹' }}</span>
+              <span>{{ annotationStage ? '审核期间不能更换' : `选择${split.label}` }}</span>
             </label>
-            <div v-if="productFolderSummary.total" class="folder-summary">
-              <strong>{{ productFolderInfo.folderName || '已选择目录' }}</strong>
+            <div class="split-folder-summary">
+              <strong>{{ productFolderInfo[split.value].folderName || '未选择' }}</strong>
               <span>
-                共 {{ productFolderSummary.total }} 张 · {{ formatBytes(productFolderInfo.totalBytes) }}
-                <template v-if="productFolderInfo.ignoredCount"> · 已忽略 {{ productFolderInfo.ignoredCount }} 个非图片文件</template>
+                {{ productFiles[split.value].length }} 张 · {{ formatBytes(productFolderInfo[split.value].totalBytes) }}
+                <template v-if="productFolderInfo[split.value].ignoredCount"> · 已忽略 {{ productFolderInfo[split.value].ignoredCount }} 个非图片文件</template>
               </span>
-              <div class="split-tags">
-                <el-tag size="small">训练 {{ productFolderSummary.train }}</el-tag>
-                <el-tag size="small" type="success">验证 {{ productFolderSummary.val }}</el-tag>
-                <el-tag size="small" type="warning">测试 {{ productFolderSummary.test }}</el-tag>
-              </div>
             </div>
+            <div v-if="split.value === 'train' && trainFolderError" class="folder-error">{{ trainFolderError }}</div>
           </div>
-        </el-form-item>
+        </div>
         <el-alert
           v-if="!annotationStage"
-          :title="productFolderInfo.splitMode === 'directory' ? '已按目录中的 train / val / test 子目录分区' : '未检测到分区目录时，将按文件路径稳定地自动分为 80% / 10% / 10%'"
-          description="图片会先暂存并自动生成候选检测框，确认或调整后才写入正式数据集。复杂背景和未检测到目标的图片必须人工审核。"
+          title="请分别选择训练集、验证集和测试集文件夹"
+          description="训练集不能为空；验证集和测试集可暂时留空，系统不会再自动分割图片。图片会先暂存并生成候选检测框，确认或调整后才写入正式数据集。"
           type="info"
           :closable="false"
           show-icon
@@ -395,10 +400,9 @@
           v-if="!annotationStage"
           type="primary"
           :loading="workspaceSubmitting"
-          :disabled="!productFolderSummary.total"
           @click="generateProductAnnotations"
         >
-          {{ productFolderSummary.total ? `为 ${productFolderSummary.total} 张图片生成检测框` : '请选择图片文件夹' }}
+          下一步
         </el-button>
         <el-button
           v-else
@@ -455,6 +459,44 @@
         <el-button @click="deleteProductVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="operationProgressVisible"
+      :title="operationTask.title || '数据集操作进度'"
+      width="540px"
+      class="operation-progress-dialog"
+      :close-on-click-modal="false"
+      :close-on-press-escape="operationFinished"
+      :show-close="operationFinished"
+    >
+      <div class="operation-progress-content">
+        <div class="operation-progress-heading">
+          <strong>{{ operationStatusText }}</strong>
+          <span>{{ operationTask.progress }}%</span>
+        </div>
+        <el-progress
+          :percentage="operationTask.progress"
+          :status="operationProgressStatus"
+          :stroke-width="14"
+          :show-text="false"
+          striped
+          striped-flow
+        />
+        <p>{{ operationTask.message || '正在准备处理…' }}</p>
+        <code v-if="operationTask.task_id">task_id: {{ operationTask.task_id }}</code>
+        <el-alert
+          v-if="operationTask.status === 'failed'"
+          class="operation-error"
+          title="操作未完成，请根据上方信息检查后重试"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+      </div>
+      <template v-if="operationFinished" #footer>
+        <el-button type="primary" @click="operationProgressVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -468,16 +510,17 @@ import {
   attachFilesToStagedImages,
   buildDatasetProductCommitPayload,
 } from '@/utils/datasetAnnotationReview'
-import { partitionProductFolderFiles } from '@/utils/datasetProductFiles'
+import { collectProductFolderFiles } from '@/utils/datasetProductFiles'
 import {
   archiveDatasetVersionApi,
-  commitDatasetProductApi,
+  commitDatasetProductTaskApi,
   createDatasetVersionApi,
-  deleteDatasetProductApi,
-  deleteDatasetVersionApi,
-  deriveDatasetVersionApi,
+  deleteDatasetProductTaskApi,
+  deleteDatasetVersionTaskApi,
+  deriveDatasetVersionTaskApi,
   discardDatasetProductStageApi,
   freezeDatasetVersionApi,
+  getDatasetOperationStatusApi,
   getDatasetVersionApi,
   getDatasetVersionsApi,
   importBaselineDatasetApi,
@@ -501,6 +544,17 @@ const deriveVisible = ref(false)
 const addProductVisible = ref(false)
 const deleteProductVisible = ref(false)
 const workspaceSubmitting = ref(false)
+const operationProgressVisible = ref(false)
+const operationRunToken = ref(0)
+const operationTask = ref({
+  task_id: '',
+  title: '',
+  operation: '',
+  status: 'pending',
+  progress: 0,
+  message: '',
+  result: null,
+})
 const deriveParent = ref(null)
 const productDataset = ref(null)
 const deleteProductDataset = ref(null)
@@ -510,12 +564,24 @@ const productFiles = ref({ train: [], val: [], test: [] })
 const annotationStage = ref(null)
 const annotationImages = ref([])
 const activeAnnotationIndex = ref(0)
-const productFolderInfo = ref({
+const emptyProductFolderInfo = () => ({
   folderName: '',
   ignoredCount: 0,
-  splitMode: 'automatic',
   totalBytes: 0,
 })
+const emptyProductFolderInfos = () => ({
+  train: emptyProductFolderInfo(),
+  val: emptyProductFolderInfo(),
+  test: emptyProductFolderInfo(),
+})
+const productFolderInfo = ref(emptyProductFolderInfos())
+const trainFolderError = ref('')
+const productFormRef = ref(null)
+const productSplitOptions = [
+  { value: 'train', label: '训练集图片文件夹', required: true },
+  { value: 'val', label: '验证集图片文件夹', required: false },
+  { value: 'test', label: '测试集图片文件夹', required: false },
+]
 const baselineForm = ref({
   scene_id: 1,
   source_path: 'datasets/vision_pay',
@@ -526,7 +592,7 @@ const baselineForm = ref({
   set_current: true,
 })
 const deriveForm = ref({ version: '', name: '', description: '' })
-const productForm = ref({ name: '', class_name: '', unit_price: 0, barcode: '' })
+const productForm = ref({ name: '', class_name: '', unit_price: null, barcode: '' })
 const formRef = ref(null)
 const filters = ref({ scene_id: null, status: '' })
 
@@ -558,14 +624,25 @@ const rules = {
   storage_path: [{ required: true, message: '请输入版本根目录', trigger: 'blur' }],
   data_yaml_path: [{ required: true, message: '请输入 data.yaml 路径', trigger: 'blur' }],
 }
+const productRules = {
+  name: [{ required: true, whitespace: true, message: '请输入商品名称', trigger: ['blur', 'change'] }],
+  class_name: [{ required: true, whitespace: true, message: '请输入类别名称', trigger: ['blur', 'change'] }],
+  unit_price: [{ required: true, type: 'number', message: '请输入价格', trigger: ['blur', 'change'] }],
+}
 
 const currentDataset = computed(() => rows.value.find((item) => item.is_current))
-const productFolderSummary = computed(() => ({
-  train: productFiles.value.train.length,
-  val: productFiles.value.val.length,
-  test: productFiles.value.test.length,
-  total: Object.values(productFiles.value).reduce((sum, items) => sum + items.length, 0),
-}))
+const operationFinished = computed(() => ['completed', 'failed'].includes(operationTask.value.status))
+const operationProgressStatus = computed(() => {
+  if (operationTask.value.status === 'completed') return 'success'
+  if (operationTask.value.status === 'failed') return 'exception'
+  return undefined
+})
+const operationStatusText = computed(() => ({
+  pending: '等待处理',
+  running: '正在处理',
+  completed: '操作完成',
+  failed: '操作失败',
+}[operationTask.value.status] || '正在处理'))
 const annotationSummary = computed(() => annotationReviewSummary(annotationImages.value))
 const activeAnnotationImage = computed(() => annotationImages.value[activeAnnotationIndex.value] || null)
 const filteredDeleteProducts = computed(() => {
@@ -671,6 +748,57 @@ async function submitBaseline() {
   }
 }
 
+const waitForOperationPoll = () => new Promise((resolve) => window.setTimeout(resolve, 500))
+
+async function runDatasetOperation(title, startTask) {
+  const runToken = operationRunToken.value + 1
+  operationRunToken.value = runToken
+  workspaceSubmitting.value = true
+  operationTask.value = {
+    task_id: '',
+    title,
+    operation: '',
+    status: 'pending',
+    progress: 0,
+    message: '正在创建后台任务…',
+    result: null,
+  }
+  operationProgressVisible.value = true
+  let taskCreated = false
+  try {
+    let task = await startTask()
+    taskCreated = true
+    operationTask.value = { title, ...task, progress: Number(task.progress || 0) }
+    while (!['completed', 'failed'].includes(task.status)) {
+      await waitForOperationPoll()
+      if (operationRunToken.value !== runToken) return null
+      task = await getDatasetOperationStatusApi(task.task_id)
+      operationTask.value = { title, ...task, progress: Number(task.progress || 0) }
+    }
+    if (task.status === 'failed') {
+      ElMessage.error(task.message || '数据集操作失败')
+      return null
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 450))
+    operationProgressVisible.value = false
+    return task.result
+  } catch (error) {
+    if (!taskCreated) {
+      operationProgressVisible.value = false
+      throw error
+    }
+    operationTask.value = {
+      ...operationTask.value,
+      status: 'failed',
+      message: error.response?.data?.detail || '无法获取后台任务进度，请检查服务器状态',
+    }
+    ElMessage.error(operationTask.value.message)
+    return null
+  } finally {
+    if (operationRunToken.value === runToken) workspaceSubmitting.value = false
+  }
+}
+
 function openDeriveDialog(row) {
   deriveParent.value = row
   deriveForm.value = {
@@ -683,44 +811,38 @@ function openDeriveDialog(row) {
 
 async function submitDerive() {
   if (!deriveParent.value || !deriveForm.value.version || !deriveForm.value.name) return
-  workspaceSubmitting.value = true
-  try {
-    const dataset = await deriveDatasetVersionApi(deriveParent.value.id, {
+  const result = await runDatasetOperation('创建派生版本', () => (
+    deriveDatasetVersionTaskApi(deriveParent.value.id, {
       ...deriveForm.value,
       description: deriveForm.value.description || null,
     })
-    deriveVisible.value = false
-    ElMessage.success('派生版本已创建，可开始增删商品')
-    await fetchDatasets()
-    await openDetail(dataset)
-  } finally {
-    workspaceSubmitting.value = false
-  }
+  ))
+  if (!result?.dataset) return
+  deriveVisible.value = false
+  ElMessage.success('派生版本已创建，可开始增删商品')
+  await fetchDatasets()
+  await openDetail(result.dataset)
 }
 
 function openAddProductDialog(dataset) {
   productDataset.value = dataset
-  productForm.value = { name: '', class_name: '', unit_price: 0, barcode: '' }
+  productForm.value = { name: '', class_name: '', unit_price: null, barcode: '' }
   productFiles.value = { train: [], val: [], test: [] }
   clearLocalAnnotationStage()
-  productFolderInfo.value = {
-    folderName: '',
-    ignoredCount: 0,
-    splitMode: 'automatic',
-    totalBytes: 0,
-  }
+  productFolderInfo.value = emptyProductFolderInfos()
+  trainFolderError.value = ''
   addProductVisible.value = true
 }
 
-function setProductFolder(event) {
-  const selection = partitionProductFolderFiles(event.target.files)
-  productFiles.value = selection.files
-  productFolderInfo.value = {
+function setProductSplitFolder(split, event) {
+  const selection = collectProductFolderFiles(event.target.files)
+  productFiles.value = { ...productFiles.value, [split]: selection.files }
+  productFolderInfo.value = { ...productFolderInfo.value, [split]: {
     folderName: selection.folderName,
     ignoredCount: selection.ignoredCount,
-    splitMode: selection.splitMode,
     totalBytes: selection.totalBytes,
-  }
+  } }
+  if (split === 'train') trainFolderError.value = selection.totalImages ? '' : '训练集文件夹至少需要一张图片'
   event.target.value = ''
   if (!selection.totalImages) ElMessage.warning('所选文件夹中没有支持的图片')
 }
@@ -749,26 +871,22 @@ async function discardCurrentAnnotationStage() {
 async function handleAddProductClosed() {
   await discardCurrentAnnotationStage()
   productFiles.value = { train: [], val: [], test: [] }
+  productFolderInfo.value = emptyProductFolderInfos()
+  trainFolderError.value = ''
 }
 
 async function restartAnnotationStage() {
   await discardCurrentAnnotationStage()
   productFiles.value = { train: [], val: [], test: [] }
-  productFolderInfo.value = {
-    folderName: '',
-    ignoredCount: 0,
-    splitMode: 'automatic',
-    totalBytes: 0,
-  }
+  productFolderInfo.value = emptyProductFolderInfos()
+  trainFolderError.value = ''
 }
 
 async function generateProductAnnotations() {
-  if (!productDataset.value || !productForm.value.name.trim()) {
-    ElMessage.warning('请填写商品名称')
-    return
-  }
-  if (!productFolderSummary.value.total) {
-    ElMessage.warning('请至少选择一张商品图片')
+  const formValid = await productFormRef.value?.validate().catch(() => false)
+  trainFolderError.value = productFiles.value.train.length ? '' : '训练集文件夹至少需要一张图片'
+  if (!productDataset.value || !formValid || trainFolderError.value) {
+    ElMessage.warning('请先完成所有必填项')
     return
   }
   const formData = new FormData()
@@ -832,22 +950,20 @@ async function submitAddProduct() {
     ElMessage.warning('请先完成所有图片的检测框审核')
     return
   }
-  workspaceSubmitting.value = true
-  try {
-    const payload = buildDatasetProductCommitPayload(
-      annotationStage.value,
-      productForm.value,
-      annotationImages.value,
-    )
-    const result = await commitDatasetProductApi(productDataset.value.id, payload)
-    clearLocalAnnotationStage()
-    addProductVisible.value = false
-    detail.value = result.dataset
-    ElMessage.success(`商品与审核标注已添加，稳定 product_id=${result.product_id}`)
-    await fetchDatasets()
-  } finally {
-    workspaceSubmitting.value = false
-  }
+  const payload = buildDatasetProductCommitPayload(
+    annotationStage.value,
+    productForm.value,
+    annotationImages.value,
+  )
+  const result = await runDatasetOperation('添加商品并更新数据集', () => (
+    commitDatasetProductTaskApi(productDataset.value.id, payload)
+  ))
+  if (!result?.dataset) return
+  clearLocalAnnotationStage()
+  addProductVisible.value = false
+  detail.value = result.dataset
+  ElMessage.success(`商品与审核标注已添加，稳定 product_id=${result.product_id}`)
+  await fetchDatasets()
 }
 
 async function deleteProductMapping(dataset, mapping) {
@@ -858,7 +974,10 @@ async function deleteProductMapping(dataset, mapping) {
   )
   deletingProductId.value = mapping.product_id
   try {
-    const result = await deleteDatasetProductApi(dataset.id, mapping.product_id, true)
+    const result = await runDatasetOperation(`删除商品 ${mapping.display_name || mapping.class_name}`, () => (
+      deleteDatasetProductTaskApi(dataset.id, mapping.product_id, true)
+    ))
+    if (!result?.dataset) return
     deleteProductDataset.value = result.dataset
     if (detail.value?.id === result.dataset.id) detail.value = result.dataset
     ElMessage.success(`已删除 ${result.images_deleted} 张相关图片并重建索引`)
@@ -989,13 +1108,20 @@ async function archiveRow(row) {
 
 async function deleteRow(row) {
   await ElMessageBox.confirm(`确定删除草稿 ${row.version} 吗？`, '删除草稿', { type: 'warning' })
-  await deleteDatasetVersionApi(row.id)
+  const result = await runDatasetOperation(`删除草稿 ${row.version}`, () => (
+    deleteDatasetVersionTaskApi(row.id)
+  ))
+  if (!result) return
   ElMessage.success('草稿已删除')
   await fetchDatasets()
 }
 
 onBeforeUnmount(() => {
-  void discardCurrentAnnotationStage()
+  operationRunToken.value += 1
+  const operationRunning = ['pending', 'running'].includes(operationTask.value.status)
+  if (!(operationRunning && operationTask.value.operation === 'add_product')) {
+    void discardCurrentAnnotationStage()
+  }
 })
 onMounted(fetchDatasets)
 </script>
@@ -1035,17 +1161,19 @@ code { color: #42526e; font-size: 11px; }
 :global(.dataset-editor-dialog .el-dialog__header), :global(.dataset-editor-dialog .el-dialog__footer) { flex: 0 0 auto; }
 :global(.dataset-editor-dialog .el-dialog__body) { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 .mapping-field :deep(textarea) { font-family: Consolas, monospace; font-size: 12px; }.form-tip { margin: 7px 0 0; color: $text-secondary; font-size: 11px; line-height: 1.6; }
-.folder-picker { width: 100%; }.folder-select-button { display: inline-flex; align-items: center; justify-content: center; padding: 8px 15px; border: 1px solid #b7c9ed; border-radius: 8px; color: #2f6fdf; background: #f5f8ff; cursor: pointer; transition: 0.2s ease; }.folder-select-button:hover { border-color: #6f9dec; background: #edf3ff; }.folder-select-button.disabled { border-color: #d8dee9; color: #9aa4b2; background: #f5f6f8; cursor: not-allowed; }.folder-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; }.folder-summary { margin-top: 10px; padding: 11px 13px; border: 1px solid #d9e5ff; border-radius: 8px; background: #f6f9ff; }.folder-summary strong, .folder-summary span { display: block; }.folder-summary span { margin-top: 3px; color: $text-secondary; font-size: 12px; }.split-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.folder-select-button { display: inline-flex; align-items: center; justify-content: center; padding: 8px 15px; border: 1px solid #b7c9ed; border-radius: 8px; color: #2f6fdf; background: #f5f8ff; cursor: pointer; transition: 0.2s ease; }.folder-select-button:hover { border-color: #6f9dec; background: #edf3ff; }.folder-select-button.disabled { border-color: #d8dee9; color: #9aa4b2; background: #f5f6f8; cursor: not-allowed; }.folder-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; }
 :global(.annotation-review-dialog) { display: flex; flex-direction: column; max-width: calc(100vw - 28px); max-height: 94vh; overflow: hidden; }
 :global(.annotation-review-dialog .el-dialog__header), :global(.annotation-review-dialog .el-dialog__footer) { flex: 0 0 auto; }
 :global(.annotation-review-dialog .el-dialog__body) { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .product-setup-form { padding-right: 4px; }.product-setup-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 14px; }.product-setup-grid :deep(.el-input-number) { width: 100%; }
+.split-folder-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 2px 0 16px; }.split-folder-card { min-width: 0; padding: 13px; border: 1px solid #dce3ee; border-radius: 10px; background: #fbfcfe; transition: border-color .2s ease, box-shadow .2s ease; }.split-folder-card.invalid { border-color: #f09aa5; box-shadow: 0 0 0 2px rgba(224, 90, 104, .08); }.split-folder-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }.split-folder-heading strong { color: $text-primary; font-size: 13px; }.split-folder-heading > span { color: $text-secondary; font-size: 11px; }.required-star { margin-right: 3px; color: #f56c6c; }.split-folder-summary { margin-top: 10px; padding: 9px 10px; border-radius: 7px; background: #f1f5fb; }.split-folder-summary strong, .split-folder-summary span { display: block; overflow-wrap: anywhere; }.split-folder-summary strong { color: $text-primary; font-size: 12px; }.split-folder-summary span { margin-top: 3px; color: $text-secondary; font-size: 11px; }.folder-error { margin-top: 7px; color: #f56c6c; font-size: 12px; line-height: 1.3; }
 .annotation-review { margin-top: 18px; padding-top: 18px; border-top: 1px solid $border-color; }.review-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 12px; }.review-heading h3 { margin: 0; color: $text-primary; font-size: 18px; }.review-heading p { margin: 5px 0 0; color: $text-secondary; font-size: 12px; }.review-summary { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .review-workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); min-height: 460px; overflow: hidden; border: 1px solid #dce3ee; border-radius: 12px; background: #f8fafc; }.annotation-thumbnails { max-height: min(60vh, 620px); overflow-y: auto; padding: 9px; border-right: 1px solid #dce3ee; background: #fff; }.annotation-thumbnail { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; margin: 0 0 7px; padding: 7px; border: 1px solid #e2e7ef; border-radius: 9px; color: inherit; background: #fff; text-align: left; cursor: pointer; }.annotation-thumbnail:hover { border-color: #a9c2ef; background: #f7faff; }.annotation-thumbnail.active { border-color: #6e9bea; box-shadow: 0 0 0 2px rgba(47,111,223,.1); }.annotation-thumbnail.pending { border-left: 3px solid #e6a23c; }.annotation-thumbnail.missing { border-left-color: #e05a68; }.annotation-thumbnail img { width: 56px; height: 48px; object-fit: cover; border-radius: 6px; background: #eef1f5; }.thumbnail-copy { min-width: 0; }.thumbnail-copy strong, .thumbnail-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.thumbnail-copy strong { color: $text-primary; font-size: 12px; }.thumbnail-copy small { margin-top: 4px; color: $text-secondary; font-size: 10px; }.annotation-editor-panel { min-width: 0; padding: 14px; }.active-image-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }.active-image-heading strong, .active-image-heading span { display: block; }.active-image-heading strong { color: $text-primary; }.active-image-heading span { margin-top: 4px; color: $text-secondary; font-size: 11px; }.active-review-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 10px; }.active-review-actions span { color: $text-secondary; font-size: 12px; }
 .product-search { margin: 16px 0 8px; }.search-result-count { margin-bottom: 8px; color: $text-secondary; font-size: 12px; }
+.operation-progress-content { padding: 6px 2px 4px; }.operation-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }.operation-progress-heading strong { color: $text-primary; font-size: 15px; }.operation-progress-heading span { color: #2f6fdf; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }.operation-progress-content p { min-height: 22px; margin: 14px 0 7px; color: $text-secondary; line-height: 1.6; }.operation-progress-content code { display: block; overflow: hidden; color: #8a94a3; text-overflow: ellipsis; white-space: nowrap; }.operation-error { margin-top: 16px; }
 .detail-heading { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }.detail-heading span { color: $text-secondary; font-size: 12px; }.detail-heading h3 { margin: 5px 0 0; font-size: 21px; }
 .validation-box { margin: 18px 0; padding: 13px 15px; border: 1px solid #a9dfbf; border-radius: 9px; color: #237a45; background: #f1fbf5; }.validation-box.invalid { border-color: #f0c0c7; color: #b73b4c; background: #fff5f6; }.validation-box strong, .validation-box span { display: block; }.validation-box span { margin-top: 3px; font-size: 11px; }.validation-box ul { margin: 8px 0 0; padding-left: 18px; }
 .mapping-header { display: flex; align-items: center; justify-content: space-between; margin: 20px 0 10px; }.mapping-header h4 { margin: 0; }.mapping-header span { color: $text-secondary; font-size: 12px; }
-@media (max-width: 1100px) { .summary-grid { grid-template-columns: repeat(2, 1fr); }.toolbar { align-items: flex-start; flex-direction: column; }.count-grid { grid-template-columns: repeat(2, 1fr); }.product-setup-grid { grid-template-columns: repeat(2, 1fr); }.review-workspace { grid-template-columns: 220px minmax(0, 1fr); } }
+@media (max-width: 1100px) { .summary-grid { grid-template-columns: repeat(2, 1fr); }.toolbar { align-items: flex-start; flex-direction: column; }.count-grid { grid-template-columns: repeat(2, 1fr); }.product-setup-grid { grid-template-columns: repeat(2, 1fr); }.split-folder-grid { grid-template-columns: 1fr; }.review-workspace { grid-template-columns: 220px minmax(0, 1fr); } }
 @media (max-width: 700px) { .dataset-page { padding: 12px; }.page-header { flex-direction: column; }.summary-grid, .form-grid, .count-grid, .product-setup-grid { grid-template-columns: 1fr; }.filters { align-items: stretch; flex-direction: column; width: 100%; }.filters .el-input-number, .filters .el-select { width: 100%; }.review-heading, .active-review-actions { align-items: stretch; flex-direction: column; }.review-summary { justify-content: flex-start; }.review-workspace { display: block; }.annotation-thumbnails { display: flex; max-height: none; overflow-x: auto; border-right: 0; border-bottom: 1px solid #dce3ee; }.annotation-thumbnail { flex: 0 0 250px; }.annotation-editor-panel { padding: 10px; } }
 </style>

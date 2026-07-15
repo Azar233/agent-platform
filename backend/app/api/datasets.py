@@ -5,14 +5,16 @@ Training and model deployment are intentionally out of scope for this router.
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.config.settings import settings
-from app.database.session import get_db
+from app.database.session import SessionLocal, get_db
 from app.entity.db_models import DatasetVersion
 from app.entity.schemas import (
     DatasetValidationRequest,
@@ -36,6 +38,7 @@ from app.services.dataset_service import (
     DatasetNotFoundError,
     dataset_service,
 )
+from app.storage.dataset_operation_store import dataset_operation_store
 
 router = APIRouter(prefix="/api/datasets", tags=["数据集版本"])
 
@@ -46,6 +49,200 @@ def _raise_service_error(exc: ValueError) -> None:
     if isinstance(exc, DatasetConflictError):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _operation_progress(task_id: str):
+    last_update = {"progress": -1, "time": 0.0}
+
+    def update(progress: int, message: str) -> None:
+        normalized = max(0, min(99, int(progress)))
+        now = time.monotonic()
+        if normalized == last_update["progress"] and now - last_update["time"] < 0.5:
+            return
+        dataset_operation_store.update(
+            task_id,
+            status="running",
+            progress=normalized,
+            message=message,
+        )
+        last_update.update(progress=normalized, time=now)
+
+    return update
+
+
+def _fail_operation(task_id: str, exc: Exception) -> None:
+    current = dataset_operation_store.get(task_id) or {}
+    dataset_operation_store.update(
+        task_id,
+        status="failed",
+        progress=min(99, int(current.get("progress", 0))),
+        message=str(exc) or "数据集操作失败",
+        result=None,
+    )
+
+
+def _run_derive_operation(
+    *,
+    task_id: str,
+    parent_id: int,
+    payload: dict,
+    user_id: int,
+    bind=None,
+) -> None:
+    db = SessionLocal() if bind is None else Session(bind=bind)
+    try:
+        dataset = dataset_workspace_service.derive(
+            db,
+            parent_id=parent_id,
+            **payload,
+            user_id=user_id,
+            progress_callback=_operation_progress(task_id),
+        )
+        dataset_operation_store.update(
+            task_id,
+            status="completed",
+            progress=100,
+            message="派生版本已创建",
+            result={"dataset": jsonable_encoder(dataset_service.serialize(dataset))},
+        )
+    except Exception as exc:  # noqa: BLE001 - surfaced through the task status endpoint.
+        db.rollback()
+        _fail_operation(task_id, exc)
+    finally:
+        db.close()
+
+
+def _run_add_product_operation(
+    *,
+    task_id: str,
+    dataset_id: int,
+    payload: DatasetProductCommitRequest,
+    user_id: int,
+    bind=None,
+) -> None:
+    db = SessionLocal() if bind is None else Session(bind=bind)
+    try:
+        dataset_operation_store.update(
+            task_id,
+            status="running",
+            progress=1,
+            message="正在读取已审核的图片与检测框",
+        )
+        reviewed_files = dataset_annotation_service.reviewed_files(
+            token=payload.staging_token,
+            dataset_id=dataset_id,
+            user_id=user_id,
+            images=payload.images,
+        )
+        dataset, product, added = dataset_workspace_service.add_product(
+            db,
+            dataset_id=dataset_id,
+            name=payload.name,
+            unit_price=payload.unit_price,
+            files=[item[:3] for item in reviewed_files],
+            annotations=[item[3] for item in reviewed_files],
+            class_name=payload.class_name,
+            barcode=payload.barcode,
+            product_key=payload.product_key,
+            progress_callback=_operation_progress(task_id),
+        )
+        try:
+            dataset_annotation_service.discard(
+                token=payload.staging_token,
+                dataset_id=dataset_id,
+                user_id=user_id,
+            )
+        except DatasetLifecycleError:
+            pass
+        dataset_operation_store.update(
+            task_id,
+            status="completed",
+            progress=100,
+            message="商品图片、标注与索引已更新",
+            result={
+                "dataset": jsonable_encoder(dataset_service.serialize(dataset)),
+                "product_id": product.id,
+                "product_key": product.product_key,
+                "images_added": added,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - surfaced through the task status endpoint.
+        db.rollback()
+        _fail_operation(task_id, exc)
+    finally:
+        db.close()
+
+
+def _run_delete_product_operation(
+    *,
+    task_id: str,
+    dataset_id: int,
+    product_id: int,
+    deactivate_product: bool,
+    bind=None,
+) -> None:
+    db = SessionLocal() if bind is None else Session(bind=bind)
+    try:
+        dataset, images_deleted, annotations_deleted, classes_reindexed = (
+            dataset_workspace_service.delete_product(
+                db,
+                dataset_id=dataset_id,
+                product_id=product_id,
+                deactivate_product=deactivate_product,
+                progress_callback=_operation_progress(task_id),
+            )
+        )
+        dataset_operation_store.update(
+            task_id,
+            status="completed",
+            progress=100,
+            message="商品样本已删除，类别与数据集索引已重建",
+            result={
+                "dataset": jsonable_encoder(dataset_service.serialize(dataset)),
+                "product_id": product_id,
+                "images_deleted": images_deleted,
+                "annotations_deleted": annotations_deleted,
+                "classes_reindexed": classes_reindexed,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - surfaced through the task status endpoint.
+        db.rollback()
+        _fail_operation(task_id, exc)
+    finally:
+        db.close()
+
+
+def _run_delete_draft_operation(*, task_id: str, dataset_id: int, bind=None) -> None:
+    db = SessionLocal() if bind is None else Session(bind=bind)
+    try:
+        dataset_service.delete_draft(
+            db,
+            dataset_id=dataset_id,
+            progress_callback=_operation_progress(task_id),
+        )
+        dataset_operation_store.update(
+            task_id,
+            status="completed",
+            progress=100,
+            message="草稿已删除",
+            result={"dataset_id": dataset_id},
+        )
+    except Exception as exc:  # noqa: BLE001 - surfaced through the task status endpoint.
+        db.rollback()
+        _fail_operation(task_id, exc)
+    finally:
+        db.close()
+
+
+@router.get("/operations/{task_id}", summary="查询数据集操作进度")
+def get_dataset_operation_status(
+    task_id: str,
+    current_user=Depends(get_current_user),
+):
+    operation = dataset_operation_store.get(task_id)
+    if operation is None or int(operation.get("user_id", 0)) != current_user.id:
+        raise HTTPException(status_code=404, detail="数据集操作任务不存在或已过期")
+    return {key: value for key, value in operation.items() if key != "user_id"}
 
 
 @router.get("", response_model=DatasetVersionListResponse, summary="数据集版本列表")
@@ -189,6 +386,34 @@ def derive_dataset_version(
 
 
 @router.post(
+    "/{dataset_id}/derive-task",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="后台创建派生版本并返回实时进度任务",
+)
+def create_derive_dataset_task(
+    dataset_id: int,
+    payload: DatasetDeriveRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    operation = dataset_operation_store.create(
+        operation="derive",
+        user_id=current_user.id,
+        message="派生版本已创建，等待处理",
+    )
+    background_tasks.add_task(
+        _run_derive_operation,
+        task_id=operation["task_id"],
+        parent_id=dataset_id,
+        payload=payload.model_dump(),
+        user_id=current_user.id,
+        bind=db.get_bind(),
+    )
+    return {key: value for key, value in operation.items() if key != "user_id"}
+
+
+@router.post(
     "/{dataset_id}/products/stage",
     response_model=DatasetProductStagingResponse,
     summary="暂存商品图片并自动生成候选检测框",
@@ -279,6 +504,34 @@ def commit_dataset_product_images(
     except (DatasetNotFoundError, DatasetConflictError, DatasetLifecycleError) as exc:
         db.rollback()
         _raise_service_error(exc)
+
+
+@router.post(
+    "/{dataset_id}/products/commit-task",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="后台写入商品图片与标注并返回实时进度任务",
+)
+def create_commit_dataset_product_task(
+    dataset_id: int,
+    payload: DatasetProductCommitRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    operation = dataset_operation_store.create(
+        operation="add_product",
+        user_id=current_user.id,
+        message="添加商品任务已创建，等待处理",
+    )
+    background_tasks.add_task(
+        _run_add_product_operation,
+        task_id=operation["task_id"],
+        dataset_id=dataset_id,
+        payload=payload,
+        user_id=current_user.id,
+        bind=db.get_bind(),
+    )
+    return {key: value for key, value in operation.items() if key != "user_id"}
 
 
 @router.delete(
@@ -387,6 +640,36 @@ def delete_dataset_product(
 
 
 @router.post(
+    "/{dataset_id}/products/{product_id}/delete-task",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="后台删除商品样本并返回实时进度任务",
+)
+def create_delete_dataset_product_task(
+    dataset_id: int,
+    product_id: int,
+    background_tasks: BackgroundTasks,
+    payload: DatasetProductDeleteRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    request = payload or DatasetProductDeleteRequest()
+    operation = dataset_operation_store.create(
+        operation="delete_product",
+        user_id=current_user.id,
+        message="删除商品任务已创建，等待处理",
+    )
+    background_tasks.add_task(
+        _run_delete_product_operation,
+        task_id=operation["task_id"],
+        dataset_id=dataset_id,
+        product_id=product_id,
+        deactivate_product=request.deactivate_product,
+        bind=db.get_bind(),
+    )
+    return {key: value for key, value in operation.items() if key != "user_id"}
+
+
+@router.post(
     "/{dataset_id}/validate",
     response_model=DatasetValidationResponse,
     summary="校验数据集定义",
@@ -483,3 +766,28 @@ def delete_dataset_version(
     except (DatasetNotFoundError, DatasetLifecycleError) as exc:
         db.rollback()
         _raise_service_error(exc)
+
+
+@router.post(
+    "/{dataset_id}/delete-task",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="后台删除数据集草稿并返回实时进度任务",
+)
+def create_delete_dataset_task(
+    dataset_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    operation = dataset_operation_store.create(
+        operation="delete_draft",
+        user_id=current_user.id,
+        message="删除草稿任务已创建，等待处理",
+    )
+    background_tasks.add_task(
+        _run_delete_draft_operation,
+        task_id=operation["task_id"],
+        dataset_id=dataset_id,
+        bind=db.get_bind(),
+    )
+    return {key: value for key, value in operation.items() if key != "user_id"}

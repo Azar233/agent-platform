@@ -103,17 +103,49 @@ def test_managed_dataset_end_to_end(client, db_session, tmp_path, monkeypatch):
     assert len({item["product_key"] for item in baseline["classes"]}) == 2
     assert (managed / f"scene_{scene.id}" / "baseline-v1" / "manifest.json").is_file()
 
-    derive_response = client.post(
-        f"/api/datasets/{baseline['id']}/derive",
+    derive_task_response = client.post(
+        f"/api/datasets/{baseline['id']}/derive-task",
         headers=headers,
         json={"version": "derived-v2", "name": "Derived"},
     )
-    assert derive_response.status_code == 201, derive_response.text
-    derived = derive_response.json()
+    assert derive_task_response.status_code == 202, derive_task_response.text
+    derive_task = derive_task_response.json()
+    derive_status_response = client.get(
+        f"/api/datasets/operations/{derive_task['task_id']}",
+        headers=headers,
+    )
+    assert derive_status_response.status_code == 200, derive_status_response.text
+    derive_status = derive_status_response.json()
+    assert derive_status["status"] == "completed"
+    assert derive_status["progress"] == 100
+    assert derive_status["operation"] == "derive"
+    derived = derive_status["result"]["dataset"]
     assert derived["status"] == "draft"
     assert [item["product_key"] for item in derived["classes"]] == [
         item["product_key"] for item in baseline["classes"]
     ]
+
+    duplicate_task_response = client.post(
+        f"/api/datasets/{baseline['id']}/derive-task",
+        headers=headers,
+        json={"version": "derived-v2", "name": "Duplicate"},
+    )
+    duplicate_task = duplicate_task_response.json()
+    duplicate_status = client.get(
+        f"/api/datasets/operations/{duplicate_task['task_id']}",
+        headers=headers,
+    ).json()
+    assert duplicate_status["status"] == "failed"
+    assert duplicate_status["progress"] < 100
+    assert "版本号不能重复" in duplicate_status["message"]
+
+    missing_train_response = client.post(
+        f"/api/datasets/{derived['id']}/products/stage",
+        headers=headers,
+        files=[("val_files", ("validation-only.jpg", _jpeg_bytes(), "image/jpeg"))],
+    )
+    assert missing_train_response.status_code == 400
+    assert "训练集文件夹至少需要一张图片" in missing_train_response.json()["message"]
 
     flat_stage_response = client.post(
         f"/api/datasets/{derived['id']}/products/stage",
@@ -173,8 +205,8 @@ def test_managed_dataset_end_to_end(client, db_session, tmp_path, monkeypatch):
         }
         for item in staged["images"]
     ]
-    add_response = client.post(
-        f"/api/datasets/{derived['id']}/products/commit",
+    add_task_response = client.post(
+        f"/api/datasets/{derived['id']}/products/commit-task",
         headers=headers,
         json={
             "staging_token": staged["staging_token"],
@@ -184,8 +216,18 @@ def test_managed_dataset_end_to_end(client, db_session, tmp_path, monkeypatch):
             "images": reviewed_images,
         },
     )
-    assert add_response.status_code == 200, add_response.text
-    added = add_response.json()
+    assert add_task_response.status_code == 202, add_task_response.text
+    add_task = add_task_response.json()
+    add_status_response = client.get(
+        f"/api/datasets/operations/{add_task['task_id']}",
+        headers=headers,
+    )
+    assert add_status_response.status_code == 200, add_status_response.text
+    add_status = add_status_response.json()
+    assert add_status["status"] == "completed"
+    assert add_status["progress"] == 100
+    assert add_status["operation"] == "add_product"
+    added = add_status["result"]
     assert added["images_added"] == 3
     assert added["dataset"]["class_count"] == 3
     third_product_id = added["product_id"]
@@ -205,14 +247,23 @@ def test_managed_dataset_end_to_end(client, db_session, tmp_path, monkeypatch):
     assert 0.75 < float(box_height) < 0.77
 
     first_product_id = baseline["classes"][0]["product_id"]
-    delete_response = client.request(
-        "DELETE",
-        f"/api/datasets/{derived['id']}/products/{first_product_id}",
+    delete_task_response = client.post(
+        f"/api/datasets/{derived['id']}/products/{first_product_id}/delete-task",
         headers=headers,
         json={"deactivate_product": True},
     )
-    assert delete_response.status_code == 200, delete_response.text
-    deleted = delete_response.json()
+    assert delete_task_response.status_code == 202, delete_task_response.text
+    delete_task = delete_task_response.json()
+    delete_status_response = client.get(
+        f"/api/datasets/operations/{delete_task['task_id']}",
+        headers=headers,
+    )
+    assert delete_status_response.status_code == 200, delete_status_response.text
+    delete_status = delete_status_response.json()
+    assert delete_status["status"] == "completed"
+    assert delete_status["progress"] == 100
+    assert delete_status["operation"] == "delete_product"
+    deleted = delete_status["result"]
     assert deleted["images_deleted"] == 3
     assert deleted["dataset"]["class_count"] == 2
     assert [item["class_index"] for item in deleted["dataset"]["classes"]] == [0, 1]

@@ -173,8 +173,8 @@ class DatasetAnnotationService:
         dataset = dataset_service.get(db, dataset_id)
         if dataset.status != "draft":
             raise DatasetLifecycleError("只能修改派生草稿数据集")
-        if not files:
-            raise DatasetLifecycleError("至少上传一张商品图片")
+        if not any(split == "train" for split, _filename, _content in files):
+            raise DatasetLifecycleError("训练集文件夹至少需要一张图片")
         if len(files) > int(settings.DATASET_MAX_BATCH_SIZE):
             raise DatasetLifecycleError(f"单次最多上传 {settings.DATASET_MAX_BATCH_SIZE} 张图片")
 

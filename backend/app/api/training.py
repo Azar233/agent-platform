@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -21,12 +21,38 @@ from app.entity.schemas import (
     TrainingRunImportRequest,
     TrainingTaskCreate,
 )
+from app.services.model_version_service import model_version_service
 from app.training.training_service import training_service
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/training", tags=["模型训练"])
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
+@router.get("/model-versions", summary="获取可用的检测模型版本")
+def list_detection_model_versions(
+    scene_id: int | None = Query(None, ge=1),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    del current_user
+    return {"items": model_version_service.list(db, scene_id=scene_id)}
+
+
+@router.post("/model-versions/{model_version_id}/set-default", summary="切换场景当前检测模型")
+def set_default_detection_model(
+    model_version_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    del current_user
+    try:
+        model = model_version_service.set_default(db, model_version_id=model_version_id)
+        return model_version_service.serialize(db, model)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _resolve_path(path_value: str | None) -> Path | None:
