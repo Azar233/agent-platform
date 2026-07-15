@@ -110,6 +110,49 @@ def test_mock_payment_expires_and_cannot_be_paid(client, db_session):
     assert confirm.status_code == 410
 
 
+def test_pending_order_can_be_closed_and_can_no_longer_be_paid(client, db_session):
+    _seed_prices(db_session)
+    headers = _auth_headers(client)
+    created = _create_order(client, headers).json()
+
+    closed = client.post(
+        f"/api/mock-pay/orders/{created['order_uuid']}/close",
+        headers=headers,
+    )
+    assert closed.status_code == 200
+    assert closed.json()["status"] == "expired"
+
+    repeated = client.post(
+        f"/api/mock-pay/orders/{created['order_uuid']}/close",
+        headers=headers,
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "expired"
+
+    confirm = client.post(
+        f"/api/mock-pay/{created['payment_token']}/confirm",
+        json={"payment_method": "wechat"},
+    )
+    assert confirm.status_code == 410
+
+
+def test_paid_order_cannot_be_closed(client, db_session):
+    _seed_prices(db_session)
+    headers = _auth_headers(client)
+    created = _create_order(client, headers).json()
+    paid = client.post(
+        f"/api/mock-pay/{created['payment_token']}/confirm",
+        json={"payment_method": "wechat"},
+    )
+    assert paid.status_code == 200
+
+    closed = client.post(
+        f"/api/mock-pay/orders/{created['order_uuid']}/close",
+        headers=headers,
+    )
+    assert closed.status_code == 409
+
+
 def test_mock_payment_rejects_unpriced_or_invalid_orders(client, db_session):
     _seed_prices(db_session)
     headers = _auth_headers(client)

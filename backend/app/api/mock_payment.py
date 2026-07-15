@@ -213,6 +213,49 @@ def delete_order(
     return None
 
 
+@router.post(
+    "/orders/{order_uuid}/close",
+    response_model=MockPaymentOrderView,
+    summary="结束待支付订单",
+)
+def close_pending_order(
+    order_uuid: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """立即结束本人创建的待支付订单；已结束订单重复调用保持幂等。"""
+    order = db.query(MockPaymentOrder).filter(MockPaymentOrder.order_uuid == order_uuid).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    if not current_user.is_superuser and order.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权结束该订单")
+
+    order = _expire_if_needed(db, order)
+    if order.status == "paid":
+        raise HTTPException(status_code=409, detail="已支付订单不能结束")
+    if order.status == "expired":
+        return _serialize_order(order)
+
+    closed_at = datetime.utcnow()
+    updated = db.query(MockPaymentOrder).filter(
+        MockPaymentOrder.id == order.id,
+        MockPaymentOrder.status == "pending",
+    ).update(
+        {
+            "status": "expired",
+            "expires_at": closed_at,
+            "updated_at": closed_at,
+        },
+        synchronize_session=False,
+    )
+    db.commit()
+    db.refresh(order)
+
+    if updated == 0 and order.status == "paid":
+        raise HTTPException(status_code=409, detail="订单已经完成支付，无法结束")
+    return _serialize_order(order)
+
+
 @router.get(
     "/orders/{order_uuid}/status",
     response_model=MockPaymentStatusResponse,

@@ -76,3 +76,11 @@ export function getMockPaymentOrderDetailApi(orderUuid) {
 export function deleteMockPaymentOrderApi(orderUuid) {
   return request.delete(`/mock-pay/orders/${orderUuid}`)
 }
+
+/**
+ * 立即结束待支付订单
+ * @param {string} orderUuid
+ */
+export function closeMockPaymentOrderApi(orderUuid) {
+  return request.post(`/mock-pay/orders/${orderUuid}/close`)
+}
