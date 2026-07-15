@@ -69,6 +69,10 @@ function handleCommand(command) {
     toggleTheme()
     return
   }
+  if (command === 'profile') {
+    router.push('/settings')
+    return
+  }
   if (command === 'logout') {
     ElMessageBox.confirm('确定要退出登录吗？', '退出登录', {
       confirmButtonText: '退出', cancelButtonText: '取消', type: 'warning',

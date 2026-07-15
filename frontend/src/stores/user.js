@@ -30,6 +30,10 @@ export const useUserStore = defineStore('user', {
   },
 
   actions: {
+    setUser(user) {
+      this.user = user
+      localStorage.setItem(USER_KEY, JSON.stringify(user))
+    },
     /**
      * 用户登录
      * @param {Object} credentials - { username, password }
@@ -40,8 +44,7 @@ export const useUserStore = defineStore('user', {
       this.token = res.access_token
       localStorage.setItem(TOKEN_KEY, res.access_token)
       // 保存用户信息
-      this.user = res.user
-      localStorage.setItem(USER_KEY, JSON.stringify(res.user))
+      this.setUser(res.user)
       return res
     },
 
@@ -51,8 +54,7 @@ export const useUserStore = defineStore('user', {
     async fetchUserInfo() {
       try {
         const user = await getUserInfoApi()
-        this.user = user
-        localStorage.setItem(USER_KEY, JSON.stringify(user))
+        this.setUser(user)
       } catch {
         this.logout()
       }
