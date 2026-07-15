@@ -65,6 +65,8 @@ class _LatestCameraFrame:
             ok, frame = self.capture.read()
             captured_at = time.perf_counter()
             with self._condition:
+                if self._stopped.is_set():
+                    break
                 if ok and frame is not None:
                     self._sequence += 1
                     self._frame = frame
@@ -79,6 +81,11 @@ class _LatestCameraFrame:
             # Real MJPEG reads block at the source frame rate. The tiny yield
             # also prevents a broken/virtual capture from spinning at 100% CPU.
             time.sleep(0.001 if ok else 0.05)
+        # 线程退出前自行释放 capture，避免主线程和读线程竞争 FFmpeg 资源
+        try:
+            self.capture.release()
+        except Exception:
+            pass
 
     def latest(self, after_sequence: int, timeout: float = 1.0):
         with self._condition:
@@ -100,9 +107,9 @@ class _LatestCameraFrame:
         self._stopped.set()
         with self._condition:
             self._condition.notify_all()
-        self.capture.release()
+        # 先等读线程完全退出（它会自己释放 capture），再给 5 秒超时
         if self._thread.is_alive():
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=5)
 
 
 def _open_camera_capture(stream_url: str):
