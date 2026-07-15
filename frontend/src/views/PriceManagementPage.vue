@@ -4,116 +4,145 @@
       <div class="page-header">
         <div>
           <h2>价目表管理</h2>
-          <p class="subtitle">维护商品 SKU、名称与单价，修改后结算端即时生效</p>
+          <p class="subtitle">选择数据集版本后，只管理该版本中已有商品的价格</p>
         </div>
-        <el-button type="primary" :icon="Plus" @click="openCreateDialog">
-          新增商品
-        </el-button>
       </div>
 
-      <div class="table-toolbar">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索商品中文名或条码"
+      <section class="dataset-scope-panel">
+        <div class="scope-copy">
+          <strong><span class="required-star">*</span>数据集版本</strong>
+          <span>价格按稳定 product_id 关联，同一商品在其他数据集版本中会同步使用新价格。</span>
+        </div>
+        <el-select
+          v-model="selectedDatasetId"
+          filterable
           clearable
-          style="width: 300px"
-          @keyup.enter="handleSearch"
-          @clear="handleSearch"
+          :loading="datasetLoading"
+          placeholder="请先搜索并选择要管理的数据集版本"
+          class="dataset-selector"
+          @change="handleDatasetChange"
         >
-          <template #append>
-            <el-button :icon="Search" @click="handleSearch" />
-          </template>
-        </el-input>
-        <el-button
-          type="danger"
-          :icon="Delete"
-          :disabled="!selectedRows.length"
-          @click="handleBatchDelete"
-        >
-          批量删除{{ selectedRows.length ? ` (${selectedRows.length})` : '' }}
-        </el-button>
-      </div>
-
-      <el-table
-        ref="tableRef"
-        @selection-change="handleSelectionChange"
-        @sort-change="handleSortChange"
-        v-loading="loading"
-        :data="paginatedPriceList"
-        row-key="category_id"
-        stripe
-        border
-        style="width: 100%"
-        :default-sort="{ prop: 'category_id', order: 'ascending' }"
-      >
-        <el-table-column type="selection" width="55" align="center" />
-        <el-table-column prop="category_id" label="类别 ID" sortable="custom" width="110" />
-        <el-table-column prop="sku_name" label="SKU 英文名" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="name" label="商品中文名" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="barcode" label="条码" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="unit_price" label="单价" sortable="custom" width="120">
-          <template #default="{ row }">
-            {{ formatPrice(row.unit_price) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="currency" label="货币" width="90" />
-        <el-table-column prop="updated_at" label="更新时间" width="170">
-          <template #default="{ row }">
-            {{ formatTime(row.updated_at) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="176" fixed="right" align="center">
-          <template #default="{ row }">
-            <div class="table-actions">
-              <el-button class="row-action edit-action" size="small" :icon="Edit" @click="openEditDialog(row)">编辑</el-button>
-              <el-button class="row-action delete-action" size="small" :icon="Delete" @click="handleDelete(row)">删除</el-button>
+          <el-option
+            v-for="dataset in datasetVersions"
+            :key="dataset.id"
+            :label="datasetOptionLabel(dataset)"
+            :value="dataset.id"
+          >
+            <div class="dataset-option">
+              <span>{{ datasetOptionLabel(dataset) }}</span>
+              <el-tag v-if="dataset.is_current" size="small" type="success">当前</el-tag>
+              <el-tag v-else size="small" :type="dataset.status === 'ready' ? 'primary' : 'info'">
+                {{ datasetStatusText(dataset.status) }}
+              </el-tag>
             </div>
-          </template>
-        </el-table-column>
-      </el-table>
+          </el-option>
+        </el-select>
+        <div v-if="selectedDataset" class="selected-dataset-summary">
+          <el-tag type="primary">{{ selectedDataset.scene_name || `场景 #${selectedDataset.scene_id}` }}</el-tag>
+          <strong>{{ selectedDataset.version }}</strong>
+          <span>{{ selectedDataset.name }}</span>
+          <span>{{ selectedDataset.class_count }} 种商品</span>
+        </div>
+      </section>
 
-      <footer class="pagination-row">
-        <span>共 {{ priceList.length }} 条记录，每页 {{ PAGE_SIZE }} 条</span>
-        <el-pagination
-          v-model:current-page="currentPage"
-          :page-size="PAGE_SIZE"
-          :total="priceList.length"
-          background
-          layout="prev, pager, next"
-          @current-change="handlePageChange"
-        />
-      </footer>
+      <el-empty
+        v-if="!selectedDatasetId"
+        description="请选择数据集版本后再管理价目表"
+        :image-size="120"
+      />
+
+      <template v-else>
+        <div class="table-toolbar">
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索商品名、条码、product_id 或 product_key"
+            clearable
+            style="width: 380px; max-width: 100%"
+            @keyup.enter="handleSearch"
+            @clear="handleSearch"
+          >
+            <template #append>
+              <el-button :icon="Search" @click="handleSearch" />
+            </template>
+          </el-input>
+          <span class="scope-hint">当前仅显示所选版本的商品</span>
+        </div>
+
+        <el-table
+          v-loading="loading"
+          :data="paginatedPriceList"
+          row-key="product_id"
+          stripe
+          border
+          style="width: 100%"
+          :default-sort="{ prop: 'class_index', order: 'ascending' }"
+          @sort-change="handleSortChange"
+        >
+          <el-table-column prop="class_index" label="class_id" sortable="custom" width="105" />
+          <el-table-column prop="product_id" label="product_id" sortable="custom" width="112" />
+          <el-table-column prop="name" label="商品名称" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.name || row.display_name || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="class_name" label="类别名称" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="product_key" label="product_key" min-width="210" show-overflow-tooltip />
+          <el-table-column prop="barcode" label="商品条码" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.barcode || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="unit_price" label="单价" sortable="custom" width="120">
+            <template #default="{ row }">
+              <span v-if="row.has_price">{{ formatPrice(row.unit_price) }}</span>
+              <el-tag v-else type="warning" size="small">未配置</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="currency" label="货币" width="80" />
+          <el-table-column prop="updated_at" label="更新时间" width="170">
+            <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="190" fixed="right" align="center">
+            <template #default="{ row }">
+              <div class="table-actions">
+                <el-button class="row-action edit-action" size="small" :icon="Edit" @click="openEditDialog(row)">
+                  {{ row.has_price ? '编辑' : '配置价格' }}
+                </el-button>
+                <el-button
+                  class="row-action delete-action"
+                  size="small"
+                  :icon="Delete"
+                  :disabled="!row.has_price"
+                  @click="handleDelete(row)"
+                >清除价格</el-button>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <footer class="pagination-row">
+          <span>共 {{ priceList.length }} 种商品，每页 {{ PAGE_SIZE }} 条</span>
+          <el-pagination
+            v-model:current-page="currentPage"
+            :page-size="PAGE_SIZE"
+            :total="priceList.length"
+            background
+            layout="prev, pager, next"
+          />
+        </footer>
+      </template>
     </el-card>
 
     <el-dialog
       v-model="dialogVisible"
-      :title="isEdit ? '编辑商品' : '新增商品'"
-      width="520px"
+      title="编辑已有商品价格"
+      width="540px"
       append-to-body
       destroy-on-close
       @closed="resetForm"
     >
-      <el-form
-        ref="formRef"
-        :model="form"
-        :rules="formRules"
-        label-width="110px"
-        status-icon
-      >
-        <el-form-item label="类别 ID" prop="category_id">
-          <el-input
-            v-if="isEdit"
-            :model-value="String(editingCategoryId ?? '')"
-            disabled
-          />
-          <el-input-number
-            v-else
-            v-model="form.category_id"
-            :min="1"
-            :max="200"
-            controls-position="right"
-            style="width: 100%"
-          />
+      <el-form ref="formRef" :model="form" :rules="formRules" label-width="110px" status-icon>
+        <el-form-item label="product_id">
+          <el-input :model-value="String(editingRow?.product_id ?? '')" disabled />
+        </el-form-item>
+        <el-form-item label="class_id">
+          <el-input :model-value="String(editingRow?.class_index ?? '')" disabled />
         </el-form-item>
         <el-form-item label="SKU 英文名" prop="sku_name">
           <el-input v-model="form.sku_name" placeholder="如 apple" />
@@ -124,7 +153,7 @@
         <el-form-item label="商品条码" prop="barcode">
           <el-input v-model="form.barcode" placeholder="如 6901234567890" />
         </el-form-item>
-        <el-form-item label="单价" prop="unit_price">
+        <el-form-item label="单价" prop="unit_price" required>
           <el-input-number
             v-model="form.unit_price"
             :min="0"
@@ -134,54 +163,57 @@
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="货币" prop="currency">
+        <el-form-item label="货币" prop="currency" required>
           <el-input v-model="form.currency" placeholder="CNY" />
         </el-form-item>
       </el-form>
 
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="handleSubmit">
-          {{ isEdit ? '保存' : '创建' }}
-        </el-button>
+        <el-button type="primary" :loading="submitting" @click="handleSubmit">保存</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Edit, Plus, Search } from '@element-plus/icons-vue'
-import {
-  getPricesApi,
-  createPriceApi,
-  updatePriceApi,
-  deletePriceApi,
-  batchDeletePricesApi,
-} from '@/api/prices'
+import { Delete, Edit, Search } from '@element-plus/icons-vue'
+import { getDatasetVersionsApi } from '@/api/datasets'
+import { deletePriceApi, getPricesApi, updatePriceApi } from '@/api/prices'
 
+const PAGE_SIZE = 10
+const datasetLoading = ref(false)
 const loading = ref(false)
 const submitting = ref(false)
-const dialogVisible = ref(false)
-const isEdit = ref(false)
-const editingCategoryId = ref(null)
+const datasetVersions = ref([])
+const selectedDatasetId = ref(null)
 const priceList = ref([])
 const searchKeyword = ref('')
-const selectedRows = ref([])
-const tableRef = ref(null)
 const currentPage = ref(1)
-const PAGE_SIZE = 10
-const sortState = ref({ prop: 'category_id', order: 'ascending' })
+const sortState = ref({ prop: 'class_index', order: 'ascending' })
+const dialogVisible = ref(false)
+const editingRow = ref(null)
+const formRef = ref(null)
+const form = ref(emptyForm())
+
+const formRules = {
+  unit_price: [{ required: true, type: 'number', message: '请输入单价', trigger: ['blur', 'change'] }],
+  currency: [{ required: true, whitespace: true, message: '请输入货币', trigger: ['blur', 'change'] }],
+}
+
+const selectedDataset = computed(() => (
+  datasetVersions.value.find((item) => item.id === selectedDatasetId.value) || null
+))
 
 const sortedPriceList = computed(() => {
   const { prop, order } = sortState.value
   if (!prop || !order) return priceList.value
-
   const direction = order === 'descending' ? -1 : 1
   return [...priceList.value].sort((left, right) => {
-    const leftValue = Number(left[prop] ?? 0)
-    const rightValue = Number(right[prop] ?? 0)
+    const leftValue = Number(left[prop] ?? -1)
+    const rightValue = Number(right[prop] ?? -1)
     return (leftValue - rightValue) * direction
   })
 })
@@ -191,107 +223,84 @@ const paginatedPriceList = computed(() => {
   return sortedPriceList.value.slice(start, start + PAGE_SIZE)
 })
 
-const formRef = ref(null)
-const form = ref({
-  category_id: 1,
-  sku_name: '',
-  name: '',
-  barcode: '',
-  unit_price: 0,
-  currency: 'CNY',
-})
+function emptyForm() {
+  return { sku_name: '', name: '', barcode: '', unit_price: null, currency: 'CNY' }
+}
 
-const formRules = {
-  category_id: [{ required: true, message: '请输入类别 ID', trigger: 'blur' }],
-  unit_price: [{ required: true, message: '请输入单价', trigger: 'blur' }],
-  currency: [{ required: true, message: '请输入货币', trigger: 'blur' }],
+function datasetOptionLabel(dataset) {
+  const scene = dataset.scene_name || `场景 #${dataset.scene_id}`
+  return `${scene} · ${dataset.version} · ${dataset.name}`
+}
+
+function datasetStatusText(status) {
+  return { draft: '草稿', ready: '已冻结', archived: '已归档' }[status] || status
 }
 
 function formatPrice(value) {
-  if (value === undefined || value === null) return '-'
-  return `¥ ${Number(value).toFixed(2)}`
+  return value === undefined || value === null ? '-' : `¥ ${Number(value).toFixed(2)}`
 }
 
 function formatTime(value) {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
+  return value ? new Date(value).toLocaleString() : '-'
+}
+
+async function fetchDatasetVersions() {
+  datasetLoading.value = true
+  try {
+    const response = await getDatasetVersionsApi({ limit: 500 })
+    datasetVersions.value = response.items || []
+  } finally {
+    datasetLoading.value = false
+  }
 }
 
 async function fetchPrices() {
+  if (!selectedDatasetId.value) {
+    priceList.value = []
+    return
+  }
   loading.value = true
   try {
-    priceList.value = await getPricesApi(searchKeyword.value)
+    priceList.value = await getPricesApi(selectedDatasetId.value, searchKeyword.value)
     const lastPage = Math.max(1, Math.ceil(priceList.value.length / PAGE_SIZE))
     currentPage.value = Math.min(currentPage.value, lastPage)
   } catch {
     priceList.value = []
     currentPage.value = 1
   } finally {
-    selectedRows.value = []
     loading.value = false
   }
 }
 
+function handleDatasetChange() {
+  searchKeyword.value = ''
+  currentPage.value = 1
+  priceList.value = []
+  if (selectedDatasetId.value) fetchPrices()
+}
+
 function handleSearch() {
   currentPage.value = 1
-  clearSelection()
   fetchPrices()
-}
-
-function handleSelectionChange(rows) {
-  selectedRows.value = rows
-}
-
-function clearSelection() {
-  selectedRows.value = []
-  tableRef.value?.clearSelection()
-}
-
-function handlePageChange() {
-  clearSelection()
 }
 
 function handleSortChange({ prop, order }) {
   sortState.value = { prop, order }
   currentPage.value = 1
-  clearSelection()
 }
 
 function resetForm() {
-  editingCategoryId.value = null
-  form.value = {
-    category_id: 1,
-    sku_name: '',
-    name: '',
-    barcode: '',
-    unit_price: 0,
-    currency: 'CNY',
-  }
-  isEdit.value = false
+  editingRow.value = null
+  form.value = emptyForm()
   formRef.value?.resetFields()
 }
 
-function openCreateDialog() {
-  isEdit.value = false
-  editingCategoryId.value = null
-  form.value = {
-    category_id: 1,
-    sku_name: '',
-    name: '',
-    barcode: '',
-    unit_price: 0,
-    currency: 'CNY',
-  }
-  dialogVisible.value = true
-}
-
 function openEditDialog(row) {
-  isEdit.value = true
-  editingCategoryId.value = Number(row.category_id)
+  if (!selectedDatasetId.value) return
+  editingRow.value = row
   form.value = {
-    category_id: row.category_id,
     sku_name: row.sku_name || '',
-    name: row.name || '',
+    name: row.name || row.display_name || '',
     barcode: row.barcode || '',
     unit_price: row.unit_price,
     currency: row.currency || 'CNY',
@@ -301,26 +310,17 @@ function openEditDialog(row) {
 
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
-
+  if (!valid || !selectedDatasetId.value || !editingRow.value) return
   submitting.value = true
   try {
-    const payload = {
-      sku_name: form.value.sku_name || null,
-      name: form.value.name || null,
-      barcode: form.value.barcode || null,
+    await updatePriceApi(selectedDatasetId.value, editingRow.value.product_id, {
+      sku_name: form.value.sku_name.trim() || null,
+      name: form.value.name.trim() || null,
+      barcode: form.value.barcode.trim() || null,
       unit_price: form.value.unit_price,
-      currency: form.value.currency,
-    }
-
-    if (isEdit.value) {
-      await updatePriceApi(editingCategoryId.value, payload)
-      ElMessage.success('商品更新成功')
-    } else {
-      await createPriceApi({ category_id: form.value.category_id, ...payload })
-      ElMessage.success('商品创建成功')
-    }
-
+      currency: form.value.currency.trim(),
+    })
+    ElMessage.success('商品价格已更新')
     dialogVisible.value = false
     await fetchPrices()
   } finally {
@@ -329,152 +329,87 @@ async function handleSubmit() {
 }
 
 async function handleDelete(row) {
+  if (!selectedDatasetId.value || !row.has_price) return
   try {
     await ElMessageBox.confirm(
-      `确定删除类别 ID 为 ${row.category_id} 的商品吗？删除后结算端将无法计价该商品。`,
-      '删除确认',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
+      `确定清除 product_id=${row.product_id} 的价格配置吗？商品和数据集标注不会被删除。`,
+      '清除价格确认',
+      { confirmButtonText: '清除价格', cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
     return
   }
-
-  try {
-    await deletePriceApi(row.category_id)
-    ElMessage.success('删除成功')
-    await fetchPrices()
-  } catch {
-    // 错误已由 request 拦截器提示
-  }
+  await deletePriceApi(selectedDatasetId.value, row.product_id)
+  ElMessage.success('价格配置已清除')
+  await fetchPrices()
 }
 
-async function handleBatchDelete() {
-  const ids = selectedRows.value.map((row) => row.category_id)
-  if (!ids.length) return
-
-  try {
-    await ElMessageBox.confirm(
-      `确定批量删除选中的 ${ids.length} 个商品吗？删除后结算端将无法计价这些商品。`,
-      '批量删除确认',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-
-  try {
-    await batchDeletePricesApi(ids)
-    ElMessage.success('批量删除成功')
-    selectedRows.value = []
-    await fetchPrices()
-  } catch {
-    // 错误已由 request 拦截器提示
-  }
-}
-
-onMounted(() => {
-  fetchPrices()
-})
+onMounted(fetchDatasetVersions)
 </script>
 
 <style lang="scss" scoped>
 .price-management-page {
   padding: 20px;
 
-  .page-card {
-    border-radius: 12px;
-  }
+  .page-card { border-radius: 12px; }
+  .page-header { margin-bottom: 18px; }
+  h2 { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+  .subtitle { margin: 0; color: #6b7280; font-size: 13px; }
+}
 
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 20px;
+.dataset-scope-panel {
+  padding: 18px;
+  margin-bottom: 20px;
+  border: 1px solid #d9e2ef;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f8fbff, #f5f8fc);
+}
 
-    h2 {
-      margin: 0 0 6px;
-      font-size: 20px;
-      font-weight: 600;
-    }
+.scope-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: #64748b;
+  font-size: 13px;
 
-    .subtitle {
-      margin: 0;
-      color: #6b7280;
-      font-size: 13px;
-    }
-  }
+  strong { color: #1f2937; font-size: 14px; }
+}
 
-  .table-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
+.required-star { margin-right: 3px; color: #f56c6c; }
+.dataset-selector { width: min(720px, 100%); }
+.dataset-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.selected-dataset-summary { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: #64748b; font-size: 13px; }
 
-  .table-actions {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 
-    .row-action {
-      min-width: 68px;
-      margin-left: 0;
-      border-radius: 8px;
-      font-weight: 500;
-      transition: color .2s ease, border-color .2s ease, background-color .2s ease, box-shadow .2s ease;
-    }
+.scope-hint { color: #64748b; font-size: 13px; }
+.table-actions { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.row-action { margin-left: 0; border-radius: 8px; font-weight: 500; }
+.edit-action { color: #0969da; border-color: #b9d7f8; background: #f2f8ff; }
+.delete-action { color: #cf3f4f; border-color: #f0c4ca; background: #fff6f7; }
 
-    .edit-action {
-      color: #0969da;
-      border-color: #b9d7f8;
-      background: #f2f8ff;
+.pagination-row {
+  min-height: 64px;
+  padding: 12px 4px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 
-      &:hover,
-      &:focus-visible {
-        color: #fff;
-        border-color: #0969da;
-        background: #0969da;
-        box-shadow: 0 4px 12px rgba(9, 105, 218, .18);
-      }
-    }
-
-    .delete-action {
-      color: #cf3f4f;
-      border-color: #f0c4ca;
-      background: #fff6f7;
-
-      &:hover,
-      &:focus-visible {
-        color: #fff;
-        border-color: #cf3f4f;
-        background: #cf3f4f;
-        box-shadow: 0 4px 12px rgba(207, 63, 79, .16);
-      }
-    }
-  }
-
-  .pagination-row {
-    min-height: 64px;
-    padding: 12px 4px 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-
-    > span {
-      color: var(--vp-muted);
-      font-size: 12px;
-    }
-  }
+  > span { color: var(--vp-muted); font-size: 12px; }
 }
 
 @media (max-width: 720px) {
-  .price-management-page .pagination-row {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+  .scope-copy,
+  .selected-dataset-summary,
+  .pagination-row { align-items: flex-start; flex-direction: column; }
 }
 </style>
