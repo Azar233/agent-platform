@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -15,11 +16,21 @@ router = APIRouter(prefix="/api/prices", tags=["商品价格"])
 
 @router.get("", response_model=list[ProductPriceResponse], summary="获取所有商品价格")
 def list_prices(
+    q: str | None = Query(None, description="按商品中文名或条码搜索"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """列出所有 SKU 的价格，按 category_id 排序。"""
-    return db.query(ProductPrice).order_by(ProductPrice.category_id).all()
+    """列出所有 SKU 的价格，按 category_id 排序；支持按中文名或条码搜索。"""
+    query = db.query(ProductPrice)
+    if q:
+        keyword = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                ProductPrice.name.ilike(keyword),
+                ProductPrice.barcode.ilike(keyword),
+            )
+        )
+    return query.order_by(ProductPrice.category_id).all()
 
 
 @router.get("/{category_id}", response_model=ProductPriceResponse, summary="获取单个商品价格")
@@ -99,6 +110,25 @@ def delete_price(
     db.delete(price)
     db.commit()
     return None
+
+
+@router.post("/batch-delete", status_code=status.HTTP_200_OK, summary="批量删除商品价格")
+def batch_delete_prices(
+    category_ids: list[int],
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """根据 category_id 列表批量删除商品价格。"""
+    if not category_ids:
+        raise HTTPException(status_code=400, detail="category_id 列表不能为空")
+
+    deleted = (
+        db.query(ProductPrice)
+        .filter(ProductPrice.category_id.in_(category_ids))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"message": "批量删除成功", "deleted": deleted}
 
 
 @router.post("/batch", summary="批量设置商品价格")

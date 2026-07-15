@@ -2,9 +2,10 @@ import request from '@/utils/request'
 
 /**
  * 获取所有商品价格
+ * @param {string} [q] 搜索关键字（商品中文名或条码）
  */
-export function getPricesApi() {
-  return request.get('/prices')
+export function getPricesApi(q) {
+  return request.get('/prices', { params: q ? { q } : undefined })
 }
 
 /**
@@ -38,4 +39,12 @@ export function updatePriceApi(categoryId, data) {
  */
 export function deletePriceApi(categoryId) {
   return request.delete(`/prices/${categoryId}`)
+}
+
+/**
+ * 批量删除商品价格
+ * @param {number[]} categoryIds
+ */
+export function batchDeletePricesApi(categoryIds) {
+  return request.post('/prices/batch-delete', categoryIds)
 }

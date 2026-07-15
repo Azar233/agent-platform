@@ -11,7 +11,31 @@
         </el-button>
       </div>
 
+      <div class="table-toolbar">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索商品中文名或条码"
+          clearable
+          style="width: 300px"
+          @keyup.enter="handleSearch"
+          @clear="handleSearch"
+        >
+          <template #append>
+            <el-button :icon="Search" @click="handleSearch" />
+          </template>
+        </el-input>
+        <el-button
+          type="danger"
+          :icon="Delete"
+          :disabled="!selectedRows.length"
+          @click="handleBatchDelete"
+        >
+          批量删除{{ selectedRows.length ? ` (${selectedRows.length})` : '' }}
+        </el-button>
+      </div>
+
       <el-table
+        @selection-change="handleSelectionChange"
         v-loading="loading"
         :data="priceList"
         stripe
@@ -19,6 +43,7 @@
         style="width: 100%"
         :default-sort="{ prop: 'category_id', order: 'ascending' }"
       >
+        <el-table-column type="selection" width="55" align="center" />
         <el-table-column prop="category_id" label="类别 ID" sortable width="110" />
         <el-table-column prop="sku_name" label="SKU 英文名" min-width="140" show-overflow-tooltip />
         <el-table-column prop="name" label="商品中文名" min-width="160" show-overflow-tooltip />
@@ -112,12 +137,13 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Edit, Plus } from '@element-plus/icons-vue'
+import { Delete, Edit, Plus, Search } from '@element-plus/icons-vue'
 import {
   getPricesApi,
   createPriceApi,
   updatePriceApi,
   deletePriceApi,
+  batchDeletePricesApi,
 } from '@/api/prices'
 
 const loading = ref(false)
@@ -126,6 +152,8 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editingCategoryId = ref(null)
 const priceList = ref([])
+const searchKeyword = ref('')
+const selectedRows = ref([])
 
 const formRef = ref(null)
 const form = ref({
@@ -156,12 +184,20 @@ function formatTime(value) {
 async function fetchPrices() {
   loading.value = true
   try {
-    priceList.value = await getPricesApi()
+    priceList.value = await getPricesApi(searchKeyword.value)
   } catch {
     priceList.value = []
   } finally {
     loading.value = false
   }
+}
+
+function handleSearch() {
+  fetchPrices()
+}
+
+function handleSelectionChange(rows) {
+  selectedRows.value = rows
 }
 
 function resetForm() {
@@ -255,6 +291,30 @@ async function handleDelete(row) {
   }
 }
 
+async function handleBatchDelete() {
+  const ids = selectedRows.value.map((row) => row.category_id)
+  if (!ids.length) return
+
+  try {
+    await ElMessageBox.confirm(
+      `确定批量删除选中的 ${ids.length} 个商品吗？删除后结算端将无法计价这些商品。`,
+      '批量删除确认',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+
+  try {
+    await batchDeletePricesApi(ids)
+    ElMessage.success('批量删除成功')
+    selectedRows.value = []
+    await fetchPrices()
+  } catch {
+    // 错误已由 request 拦截器提示
+  }
+}
+
 onMounted(() => {
   fetchPrices()
 })
@@ -285,6 +345,15 @@ onMounted(() => {
       color: #6b7280;
       font-size: 13px;
     }
+  }
+
+  .table-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
   }
 
   .table-actions {
