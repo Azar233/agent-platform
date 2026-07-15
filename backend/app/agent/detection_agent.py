@@ -103,11 +103,35 @@ class DetectionAgent:
             )
             return result_to_json(self.last_detection_result)
 
+        def list_system_users(keyword: str = "") -> str:
+            """管理员查询系统用户，可按用户名或邮箱关键词筛选，也可用于查询管理员。"""
+            from app.database.session import SessionLocal
+            from app.services.user_service import user_service
+
+            db = SessionLocal()
+            try:
+                requester = user_service.get_user_by_id(db, self.user_id)
+                if not user_service.is_admin(requester):
+                    return json.dumps(
+                        {"error": "仅管理员可查询系统用户与权限信息"},
+                        ensure_ascii=False,
+                    )
+                result = user_service.list_users(
+                    db,
+                    page=1,
+                    page_size=100,
+                    keyword=keyword or None,
+                )
+                return json.dumps(result, ensure_ascii=False)
+            finally:
+                db.close()
+
         tools = [
             StructuredTool.from_function(single, name="detect_single_product_image"),
             StructuredTool.from_function(batch, name="detect_product_images"),
             StructuredTool.from_function(zip_images, name="detect_product_zip"),
             StructuredTool.from_function(video, name="detect_product_video"),
+            StructuredTool.from_function(list_system_users, name="list_system_users"),
         ]
         llm = ChatOpenAI(
             model=settings.DEEPSEEK_MODEL,
@@ -127,7 +151,8 @@ class DetectionAgent:
 2. 有附件且用户表达检测、识别、盘点或结算意图时，直接调用工具，不要再次索要路径。
 3. 不编造商品、数量、价格或置信度。价格数据尚未接入时，明确说明只能生成识别清单，不能计算金额。
 4. 工具完成后先给出图片数或关键帧数和检测总数，再按类别汇总；视频结果说明统计未经跨帧去重，低置信度结果提示人工复核。
-5. 没有附件时，可以回答本平台识别流程、模型能力和操作问题；不要声称已经执行检测。""",
+5. 管理员询问系统用户、管理员或账号列表时调用用户查询工具；普通用户无权查看全站用户目录。
+6. 没有附件时，可以回答本平台识别流程、模型能力和操作问题；不要声称已经执行检测。""",
                 ),
                 MessagesPlaceholder("chat_history", optional=True),
                 ("human", "{input}"),

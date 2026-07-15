@@ -1,0 +1,163 @@
+"""Day 10 dashboard, history, and account settings integration tests."""
+
+from datetime import datetime, timedelta
+
+from app.entity.db_models import DetectionResult, DetectionScene, DetectionTask, User
+
+
+def auth_headers(client, username="day10_user"):
+    client.post(
+        "/api/auth/register",
+        json={"username": username, "email": f"{username}@example.com", "password": "123456"},
+    )
+    response = client.post(
+        "/api/auth/login",
+        json={"username": username, "password": "123456"},
+    )
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def seed_scene(db_session, owner: User, name="visionpay_day10"):
+    scene = DetectionScene(
+        name=name,
+        display_name="VisionPay 零售识别",
+        category="retail",
+        class_names=["cola", "chips"],
+        created_by=owner.id,
+    )
+    db_session.add(scene)
+    db_session.commit()
+    db_session.refresh(scene)
+    return scene
+
+
+def seed_task(db_session, owner, scene, **overrides):
+    values = {
+        "user_id": owner.id,
+        "scene_id": scene.id,
+        "task_type": "single",
+        "status": "completed",
+        "total_images": 1,
+        "total_objects": 2,
+        "total_inference_time": 20,
+        "created_at": datetime.now(),
+        "completed_at": datetime.now(),
+    }
+    values.update(overrides)
+    task = DetectionTask(**values)
+    db_session.add(task)
+    db_session.commit()
+    db_session.refresh(task)
+    return task
+
+
+def test_day10_routes_require_auth(client):
+    assert client.get("/api/dashboard/statistics").status_code == 401
+    assert client.get("/api/history/tasks").status_code == 401
+    assert client.put("/api/user/profile", json={"phone": "123"}).status_code == 401
+
+
+def test_dashboard_aggregates_only_current_user(client, db_session):
+    headers = auth_headers(client)
+    owner = db_session.query(User).filter_by(username="day10_user").one()
+    scene = seed_scene(db_session, owner)
+    first = seed_task(db_session, owner, scene, total_images=2, total_objects=3, total_inference_time=40)
+    seed_task(db_session, owner, scene, task_type="video", total_images=4, total_objects=5, total_inference_time=80)
+    db_session.add_all(
+        [
+            DetectionResult(task_id=first.id, image_path="a.jpg", class_name="cola", class_name_cn="可乐", class_id=0, confidence=.9, bbox=[1, 2, 3, 4]),
+            DetectionResult(task_id=first.id, image_path="a.jpg", class_name="chips", class_name_cn="薯片", class_id=1, confidence=.8, bbox=[2, 3, 4, 5]),
+        ]
+    )
+    other_headers = auth_headers(client, "day10_other")
+    other = db_session.query(User).filter_by(username="day10_other").one()
+    seed_task(db_session, other, scene, total_images=100, total_objects=100, total_inference_time=100)
+    db_session.commit()
+
+    stats = client.get("/api/dashboard/statistics?days=30", headers=headers)
+    assert stats.status_code == 200
+    assert stats.json()["total_tasks"] == 2
+    assert stats.json()["total_images"] == 6
+    assert stats.json()["total_objects"] == 8
+    assert stats.json()["avg_inference_time"] == 20.0
+    assert client.get("/api/dashboard/statistics?days=30", headers=other_headers).json()["total_tasks"] == 1
+
+    class_dist = client.get("/api/dashboard/class-dist?days=30", headers=headers).json()
+    assert class_dist["distribution"] == [{"name": "可乐", "value": 1}, {"name": "薯片", "value": 1}]
+    type_dist = client.get("/api/dashboard/type-dist?days=30", headers=headers).json()
+    assert {item["name"] for item in type_dist["distribution"]} == {"单图识别", "视频识别"}
+    assert len(client.get("/api/dashboard/trend?days=7", headers=headers).json()["trend"]) == 7
+
+
+def test_history_filters_details_deletes_and_isolates(client, db_session):
+    headers = auth_headers(client)
+    owner = db_session.query(User).filter_by(username="day10_user").one()
+    scene = seed_scene(db_session, owner)
+    completed = seed_task(db_session, owner, scene, task_type="zip")
+    seed_task(
+        db_session,
+        owner,
+        scene,
+        task_type="video",
+        status="failed",
+        created_at=datetime.now() - timedelta(days=10),
+        error_message="bad video",
+    )
+    db_session.add(
+        DetectionResult(task_id=completed.id, image_path="zip/a.jpg", class_name="cola", class_id=0, confidence=.93, bbox=[1, 2, 3, 4])
+    )
+    db_session.commit()
+
+    listing = client.get("/api/history/tasks?task_type=zip&status=completed", headers=headers)
+    assert listing.status_code == 200
+    assert listing.json()["total"] == 1
+    assert listing.json()["items"][0]["avg_inference_time"] == 20.0
+
+    detail = client.get(f"/api/history/tasks/{completed.id}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["class_counts"] == {"cola": 1}
+    assert detail.json()["results"][0]["confidence"] == .93
+
+    other_headers = auth_headers(client, "history_other")
+    assert client.get(f"/api/history/tasks/{completed.id}", headers=other_headers).status_code == 404
+    assert client.delete(f"/api/history/tasks/{completed.id}", headers=other_headers).status_code == 404
+    assert client.delete(f"/api/history/tasks/{completed.id}", headers=headers).status_code == 200
+    assert db_session.query(DetectionResult).filter_by(task_id=completed.id).count() == 0
+
+
+def test_profile_and_password_settings(client):
+    headers = auth_headers(client)
+    updated = client.put(
+        "/api/user/profile",
+        headers=headers,
+        json={"email": "updated@example.com", "phone": "13800138000"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["user"]["phone"] == "13800138000"
+    assert client.get("/api/auth/me", headers=headers).json()["email"] == "updated@example.com"
+
+    wrong = client.put(
+        "/api/user/password",
+        headers=headers,
+        json={"old_password": "bad-password", "new_password": "654321"},
+    )
+    assert wrong.status_code == 400
+    changed = client.put(
+        "/api/user/password",
+        headers=headers,
+        json={"old_password": "123456", "new_password": "654321"},
+    )
+    assert changed.status_code == 200
+    assert client.post("/api/auth/login", json={"username": "day10_user", "password": "654321"}).status_code == 200
+
+
+def test_user_directory_is_admin_only(client, db_session):
+    headers = auth_headers(client)
+    assert client.get("/api/user/list", headers=headers).status_code == 403
+
+    user = db_session.query(User).filter_by(username="day10_user").one()
+    user.is_superuser = True
+    db_session.commit()
+    listing = client.get("/api/user/list?keyword=day10", headers=headers)
+    assert listing.status_code == 200
+    assert listing.json()["items"][0]["username"] == "day10_user"

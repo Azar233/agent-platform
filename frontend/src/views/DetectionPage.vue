@@ -10,9 +10,6 @@
         <span :class="['agent-status', { ready: agentStatus.configured }]">
           <i></i>{{ agentStatus.configured ? agentStatus.model : 'Agent 未配置' }}
         </span>
-        <el-tooltip content="创建新对话" placement="bottom" :show-arrow="false">
-          <el-button :icon="Plus" circle @click="resetWorkspace" />
-        </el-tooltip>
       </div>
     </header>
 
@@ -418,7 +415,6 @@ async function sendToAgent() {
   } catch (error) { assistant.content = error.message || '附件上传失败'; assistant.loading = false; agentStore.setLoading(false) }
 }
 function stopStream() { agentStore.abort(); const last = agentStore.messages.at(-1); if (last?.role === 'assistant') { last.loading = false; last.tool = ''; if (!last.content) last.content = '已停止本次响应。' } }
-function resetWorkspace() { createNewChat() }
 </script>
 
 <style lang="scss" scoped>

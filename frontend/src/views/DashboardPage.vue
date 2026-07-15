@@ -1,108 +1,235 @@
 <template>
-  <div class="dashboard-page">
-    <section class="hero-panel">
-      <div class="hero-copy">
-        <span class="vp-kicker">VisionPay Overview</span>
-        <h1>零售视觉，<br />一目了然。</h1>
-        <p>在一个安静、清晰的视图中掌握商品识别、训练任务与智能体运行状态。</p>
-        <div class="hero-actions">
-          <el-button type="primary" @click="$router.push('/detection')">开始商品检测</el-button>
-          <router-link to="/training">查看模型训练 <span>›</span></router-link>
-        </div>
+  <div class="dashboard-page" v-loading="loading">
+    <header class="page-header">
+      <div>
+        <span class="vp-kicker">Retail Intelligence</span>
+        <h1>数据看板</h1>
+        <p>汇总当前账号的商品识别任务、处理规模与模型推理表现。</p>
       </div>
-      <div class="hero-visual" aria-hidden="true">
-        <div class="visual-orbit orbit-one"></div>
-        <div class="visual-orbit orbit-two"></div>
-        <div class="visual-mark"><img src="/favicon.svg" alt="" /></div>
-        <span class="signal signal-one"></span>
-        <span class="signal signal-two"></span>
-        <span class="signal signal-three"></span>
-      </div>
-    </section>
+      <el-radio-group v-model="periodDays" @change="loadDashboard">
+        <el-radio-button :value="7">7 天</el-radio-button>
+        <el-radio-button :value="30">30 天</el-radio-button>
+        <el-radio-button :value="90">90 天</el-radio-button>
+      </el-radio-group>
+    </header>
 
-    <section class="metric-grid" aria-label="核心指标">
-      <article v-for="item in metrics" :key="item.label" class="metric-card">
-        <div class="metric-icon"><el-icon><component :is="item.icon" /></el-icon></div>
-        <span>{{ item.label }}</span>
-        <strong>{{ item.value }}</strong>
-        <small>{{ item.note }}</small>
+    <section class="metric-grid" aria-label="识别业务指标">
+      <article v-for="card in metricCards" :key="card.key" class="metric-card">
+        <div :class="['metric-icon', card.tone]"><el-icon><component :is="card.icon" /></el-icon></div>
+        <div class="metric-copy">
+          <span>{{ card.label }}</span>
+          <strong>{{ card.value }}<small v-if="card.unit">{{ card.unit }}</small></strong>
+        </div>
+        <span :class="['growth', growthTone(card.key, card.inverse)]">
+          {{ growthText(card.key) }}
+        </span>
       </article>
     </section>
 
-    <section class="insight-panel">
-      <div>
-        <span class="vp-kicker">Today</span>
-        <h2>智能分析已准备就绪</h2>
-        <p>上传商品图片后，系统会在这里逐步形成识别趋势、价格汇总与低置信度提醒。</p>
-      </div>
-      <div class="readiness"><span></span><strong>系统就绪</strong><small>等待新任务</small></div>
+    <section class="chart-grid">
+      <article class="chart-card chart-wide">
+        <header><div><span>识别趋势</span><small>任务、图片与商品实例</small></div></header>
+        <div ref="trendChartRef" class="chart"></div>
+      </article>
+      <article class="chart-card">
+        <header><div><span>商品类别</span><small>按识别实例统计 Top 8</small></div></header>
+        <div ref="classChartRef" class="chart"></div>
+      </article>
+      <article class="chart-card">
+        <header><div><span>业务场景</span><small>按识别任务统计</small></div></header>
+        <div ref="sceneChartRef" class="chart"></div>
+      </article>
+      <article class="chart-card">
+        <header><div><span>识别方式</span><small>单图、批量、ZIP 与视频</small></div></header>
+        <div ref="typeChartRef" class="chart"></div>
+      </article>
     </section>
   </div>
 </template>
 
 <script setup>
-import { Camera, Cpu, TrendCharts } from '@element-plus/icons-vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { getInstanceByDom, init, use } from 'echarts/core'
+import { BarChart, LineChart, PieChart } from 'echarts/charts'
+import { GraphicComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import { Aim, Camera, PictureFilled, Timer } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import {
+  getClassDistribution,
+  getSceneDistribution,
+  getStatistics,
+  getTrend,
+  getTypeDistribution,
+} from '@/api/dashboard'
+import { useTheme } from '@/composables/useTheme'
 
-const metrics = [
-  { label: '检测任务', value: '—', note: '等待首次识别', icon: Camera },
-  { label: '训练任务', value: '—', note: 'YOLOv11 pipeline', icon: Cpu },
-  { label: '平均置信度', value: '—', note: '按商品类别汇总', icon: TrendCharts },
-]
+const periodDays = ref(30)
+const loading = ref(false)
+const stats = ref({ total_tasks: 0, total_images: 0, total_objects: 0, avg_inference_time: 0, growth: {} })
+const trend = ref([])
+const classDistribution = ref([])
+const sceneDistribution = ref([])
+const typeDistribution = ref([])
+const trendChartRef = ref()
+const classChartRef = ref()
+const sceneChartRef = ref()
+const typeChartRef = ref()
+const charts = []
+let resizeObserver
+const { isDark } = useTheme()
+
+use([LineChart, PieChart, BarChart, TooltipComponent, LegendComponent, GridComponent, GraphicComponent, CanvasRenderer])
+
+const metricCards = computed(() => [
+  { key: 'tasks', label: '识别任务', value: formatNumber(stats.value.total_tasks), icon: Camera, tone: 'blue' },
+  { key: 'images', label: '处理图片 / 帧', value: formatNumber(stats.value.total_images), icon: PictureFilled, tone: 'green' },
+  { key: 'objects', label: '商品实例', value: formatNumber(stats.value.total_objects), icon: Aim, tone: 'orange' },
+  { key: 'inference_time', label: '单图平均推理', value: Number(stats.value.avg_inference_time || 0).toFixed(1), unit: 'ms', icon: Timer, tone: 'purple', inverse: true },
+])
+
+function formatNumber(value) {
+  return new Intl.NumberFormat('zh-CN').format(Number(value || 0))
+}
+
+function growthValue(key) {
+  return Number(stats.value.growth?.[key] || 0)
+}
+
+function growthText(key) {
+  const value = growthValue(key)
+  if (value === 0) return '与上期持平'
+  return `${value > 0 ? '↑' : '↓'} ${Math.abs(value).toFixed(1)}% 较上期`
+}
+
+function growthTone(key, inverse = false) {
+  const value = growthValue(key)
+  if (!value) return 'neutral'
+  const positive = inverse ? value < 0 : value > 0
+  return positive ? 'positive' : 'negative'
+}
+
+function palette() {
+  const style = getComputedStyle(document.documentElement)
+  return {
+    text: style.getPropertyValue('--vp-text').trim() || '#1d1d1f',
+    muted: style.getPropertyValue('--vp-muted').trim() || '#6e6e73',
+    border: style.getPropertyValue('--vp-border').trim() || '#e5e5e7',
+    surface: style.getPropertyValue('--vp-surface').trim() || '#fff',
+  }
+}
+
+function compactDistribution(items, limit = 8) {
+  if (items.length <= limit) return items
+  const head = items.slice(0, limit)
+  return [...head, { name: '其他', value: items.slice(limit).reduce((sum, item) => sum + item.value, 0) }]
+}
+
+function emptyGraphic(message) {
+  return [{ type: 'text', left: 'center', top: 'middle', style: { text: message, fill: palette().muted, fontSize: 13 } }]
+}
+
+function baseChart(refValue) {
+  let chart = getInstanceByDom(refValue)
+  if (!chart) {
+    chart = init(refValue)
+    charts.push(chart)
+    resizeObserver?.observe(refValue)
+  }
+  return chart
+}
+
+function renderCharts() {
+  if (!trendChartRef.value) return
+  const colors = palette()
+  const axis = { axisLine: { lineStyle: { color: colors.border } }, axisLabel: { color: colors.muted }, splitLine: { lineStyle: { color: colors.border } } }
+  const trendChart = baseChart(trendChartRef.value)
+  trendChart.setOption({
+    color: ['#0071e3', '#34c759', '#ff9f0a'],
+    tooltip: { trigger: 'axis', backgroundColor: colors.surface, borderColor: colors.border, textStyle: { color: colors.text } },
+    legend: { top: 0, right: 4, textStyle: { color: colors.muted } },
+    grid: { left: 44, right: 18, top: 46, bottom: 30 },
+    xAxis: { type: 'category', data: trend.value.map((item) => item.date.slice(5)), boundaryGap: false, ...axis },
+    yAxis: { type: 'value', minInterval: 1, ...axis },
+    series: [
+      { name: '任务', type: 'line', smooth: true, showSymbol: false, areaStyle: { opacity: 0.08 }, data: trend.value.map((item) => item.task_count) },
+      { name: '图片 / 帧', type: 'line', smooth: true, showSymbol: false, data: trend.value.map((item) => item.image_count) },
+      { name: '商品实例', type: 'line', smooth: true, showSymbol: false, data: trend.value.map((item) => item.object_count) },
+    ],
+  }, true)
+
+  const pieColors = ['#0071e3', '#34c759', '#ff9f0a', '#af52de', '#5ac8fa', '#ff375f', '#64d2ff', '#bf5af2', '#8e8e93']
+  for (const [element, source, emptyText] of [
+    [classChartRef.value, compactDistribution(classDistribution.value), '暂无商品类别数据'],
+    [typeChartRef.value, typeDistribution.value, '暂无识别方式数据'],
+  ]) {
+    const chart = baseChart(element)
+    chart.setOption({
+      color: pieColors,
+      tooltip: { trigger: 'item', formatter: '{b}<br/>{c}（{d}%）', backgroundColor: colors.surface, borderColor: colors.border, textStyle: { color: colors.text } },
+      legend: { type: 'scroll', bottom: 0, left: 'center', textStyle: { color: colors.muted }, pageTextStyle: { color: colors.muted } },
+      graphic: source.length ? [] : emptyGraphic(emptyText),
+      series: [{ type: 'pie', radius: ['42%', '68%'], center: ['50%', '43%'], minAngle: 3, label: { show: false }, data: source }],
+    }, true)
+  }
+
+  const sceneChart = baseChart(sceneChartRef.value)
+  sceneChart.setOption({
+    color: ['#0071e3'],
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: colors.surface, borderColor: colors.border, textStyle: { color: colors.text } },
+    grid: { left: 24, right: 24, top: 18, bottom: 52, containLabel: true },
+    xAxis: { type: 'category', data: sceneDistribution.value.map((item) => item.name), axisLabel: { color: colors.muted, interval: 0, rotate: sceneDistribution.value.length > 4 ? 25 : 0 }, axisLine: axis.axisLine },
+    yAxis: { type: 'value', minInterval: 1, ...axis },
+    graphic: sceneDistribution.value.length ? [] : emptyGraphic('暂无业务场景数据'),
+    series: [{ type: 'bar', data: sceneDistribution.value.map((item) => item.value), barMaxWidth: 48, itemStyle: { borderRadius: [7, 7, 0, 0] } }],
+  }, true)
+}
+
+async function loadDashboard() {
+  loading.value = true
+  try {
+    const [statisticsData, trendData, classData, sceneData, typeData] = await Promise.all([
+      getStatistics(periodDays.value), getTrend(periodDays.value), getClassDistribution(periodDays.value),
+      getSceneDistribution(periodDays.value), getTypeDistribution(periodDays.value),
+    ])
+    stats.value = statisticsData
+    trend.value = trendData.trend || []
+    classDistribution.value = classData.distribution || []
+    sceneDistribution.value = sceneData.distribution || []
+    typeDistribution.value = typeData.distribution || []
+    await nextTick()
+    renderCharts()
+  } catch {
+    ElMessage.error('数据看板加载失败，请稍后重试')
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(isDark, () => nextTick(renderCharts))
+
+onMounted(() => {
+  resizeObserver = new ResizeObserver(() => charts.forEach((chart) => chart.resize()))
+  loadDashboard()
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  charts.splice(0).forEach((chart) => chart.dispose())
+})
 </script>
 
 <style lang="scss" scoped>
-.dashboard-page { min-height: 100%; padding: 32px; display: flex; flex-direction: column; gap: 24px; background: transparent; }
-
-.hero-panel {
-  position: relative;
-  min-height: 390px;
-  padding: clamp(40px, 6vw, 72px);
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(300px, .9fr);
-  align-items: center;
-  gap: 48px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, .82);
-  border: 1px solid $border-color;
-  border-radius: $border-radius-lg;
-  box-shadow: 0 18px 55px rgba(0, 0, 0, .055);
-  backdrop-filter: blur(24px) saturate(130%);
-}
-
-.hero-copy { position: relative; z-index: 2; }
-.hero-copy h1 { margin: 14px 0 0; color: $text-primary; font-size: clamp(44px, 6vw, 68px); font-weight: 600; line-height: 1.02; letter-spacing: -.06em; }
-.hero-copy p { max-width: 590px; margin: 20px 0 0; color: $text-secondary; font-size: 17px; line-height: 1.65; }
-.hero-actions { margin-top: 30px; display: flex; align-items: center; gap: 22px; }
-.hero-actions .el-button { min-height: 48px; padding-inline: 24px; }
-.hero-actions a { color: $primary-color; font-size: 15px; font-weight: 500; }
-.hero-actions a span { display: inline-block; margin-left: 3px; font-size: 20px; transition: transform .2s ease; }
-.hero-actions a:hover span { transform: translateX(3px); }
-
-.hero-visual { position: relative; min-height: 260px; display: grid; place-items: center; }
-.visual-mark { z-index: 2; width: 96px; height: 96px; display: grid; place-items: center; border-radius: 28px; background: linear-gradient(145deg, #1688f8, #0068d4); box-shadow: 0 28px 70px rgba(0, 113, 227, .28), inset 0 1px rgba(255,255,255,.38); }
-.visual-mark img { width: 54px; height: 54px; }
-.visual-orbit { position: absolute; border: 1px solid rgba(0, 113, 227, .14); border-radius: 50%; }
-.orbit-one { width: 210px; height: 210px; }
-.orbit-two { width: 300px; height: 300px; border-color: rgba(0, 113, 227, .08); }
-.signal { position: absolute; width: 10px; height: 10px; border: 3px solid #fff; border-radius: 50%; background: $primary-color; box-shadow: 0 4px 12px rgba(0, 113, 227, .28); }
-.signal-one { top: 24px; right: 28%; }.signal-two { bottom: 42px; left: 21%; }.signal-three { right: 16%; bottom: 26%; width: 7px; height: 7px; }
-
-.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.metric-card { min-height: 170px; padding: 24px; display: grid; grid-template-columns: 40px 1fr; grid-template-rows: auto auto auto; align-items: center; column-gap: 14px; background: rgba(255,255,255,.76); border: 1px solid $border-color; border-radius: $border-radius-md; box-shadow: $shadow-sm; transition: transform .25s ease, box-shadow .25s ease; }
-.metric-card:hover { transform: translateY(-2px); box-shadow: $shadow-md; }
-.metric-icon { grid-row: 1; width: 40px; height: 40px; display: grid; place-items: center; color: $primary-color; background: $primary-soft; border-radius: 12px; font-size: 18px; }
-.metric-card > span { color: $text-secondary; font-size: 13px; }
-.metric-card strong { grid-column: 1 / -1; margin-top: 16px; color: $text-primary; font-size: 34px; font-weight: 600; letter-spacing: -.04em; }
-.metric-card small { grid-column: 1 / -1; margin-top: 5px; color: $text-placeholder; }
-
-.insight-panel { padding: 32px; display: flex; align-items: center; justify-content: space-between; gap: 24px; background: rgba(255,255,255,.76); border: 1px solid $border-color; border-radius: $border-radius-md; }
-.insight-panel h2 { margin: 8px 0 0; font-size: 24px; font-weight: 600; letter-spacing: -.025em; }
-.insight-panel p { max-width: 650px; margin: 9px 0 0; color: $text-secondary; line-height: 1.6; }
-.readiness { min-width: 160px; display: grid; grid-template-columns: 9px 1fr; gap: 3px 9px; align-items: center; }
-.readiness > span { width: 9px; height: 9px; grid-row: 1 / 3; border-radius: 50%; background: $success-color; box-shadow: 0 0 0 5px rgba(36,138,61,.1); }
-.readiness strong { font-size: 14px; font-weight: 600; }.readiness small { color: $text-secondary; }
-
-@media (prefers-reduced-motion: no-preference) { .visual-orbit { animation: breathe 4s ease-in-out infinite; } .orbit-two { animation-delay: -2s; } @keyframes breathe { 50% { transform: scale(1.035); opacity: .65; } } }
-@media (max-width: 980px) { .hero-panel { grid-template-columns: 1fr; }.hero-visual { display: none; } }
-@media (max-width: 760px) { .dashboard-page { padding: 12px; gap: 12px; }.hero-panel { min-height: auto; padding: 36px 24px; }.hero-copy h1 { font-size: 42px; }.metric-grid { grid-template-columns: 1fr; }.insight-panel { align-items: flex-start; flex-direction: column; } }
+.dashboard-page { min-height: 100%; padding: 32px; display: flex; flex-direction: column; gap: 20px; }
+.page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 30px 32px; border: 1px solid $border-color; border-radius: $border-radius-lg; background: $surface-color; box-shadow: $shadow-sm; }
+.page-header h1 { margin: 8px 0 0; color: $text-primary; font-size: 38px; font-weight: 600; letter-spacing: -.045em; }
+.page-header p { margin: 9px 0 0; color: $text-secondary; line-height: 1.6; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.metric-card { min-width: 0; padding: 22px; display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 14px; border: 1px solid $border-color; border-radius: $border-radius-md; background: $surface-color; box-shadow: $shadow-sm; }
+.metric-icon { width: 46px; height: 46px; display: grid; place-items: center; border-radius: 14px; font-size: 20px; }.metric-icon.blue { color: #0071e3; background: rgba(0,113,227,.1); }.metric-icon.green { color: #248a3d; background: rgba(52,199,89,.12); }.metric-icon.orange { color: #c93400; background: rgba(255,159,10,.13); }.metric-icon.purple { color: #8944ab; background: rgba(175,82,222,.12); }
+.metric-copy { min-width: 0; display: flex; flex-direction: column; gap: 5px; }.metric-copy > span { color: $text-secondary; font-size: 12px; }.metric-copy strong { overflow: hidden; color: $text-primary; font-size: 30px; font-weight: 600; letter-spacing: -.04em; text-overflow: ellipsis; }.metric-copy small { margin-left: 4px; color: $text-secondary; font-size: 12px; font-weight: 500; }
+.growth { grid-column: 1 / -1; width: fit-content; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }.growth.positive { color: $success-color; background: color-mix(in srgb, $success-color 12%, transparent); }.growth.negative { color: $danger-color; background: color-mix(in srgb, $danger-color 10%, transparent); }.growth.neutral { color: $text-secondary; background: $surface-muted; }
+.chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }.chart-card { min-width: 0; overflow: hidden; border: 1px solid $border-color; border-radius: $border-radius-md; background: $surface-color; box-shadow: $shadow-sm; }.chart-card.chart-wide { grid-column: 1 / -1; }.chart-card header { min-height: 70px; padding: 0 22px; display: flex; align-items: center; border-bottom: 1px solid $border-color; }.chart-card header div { display: flex; flex-direction: column; gap: 4px; }.chart-card header span { color: $text-primary; font-weight: 600; }.chart-card header small { color: $text-secondary; }.chart { width: 100%; height: 330px; }.chart-wide .chart { height: 360px; }
+@media (max-width: 1100px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 760px) { .dashboard-page { padding: 12px; }.page-header { padding: 24px; align-items: flex-start; flex-direction: column; }.metric-grid, .chart-grid { grid-template-columns: 1fr; }.chart-card.chart-wide { grid-column: auto; }.chart { height: 300px; } }
 </style>
