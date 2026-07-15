@@ -7,13 +7,6 @@
           <p class="subtitle">查询已创建的收银订单记录</p>
         </div>
         <div class="header-actions">
-          <el-button
-            :type="editMode ? 'success' : 'default'"
-            :icon="Edit"
-            @click="toggleEditMode"
-          >
-            {{ editMode ? '完成' : '编辑' }}
-          </el-button>
           <el-button type="primary" text :icon="ArrowLeft" @click="router.push('/checkout')">
             返回结算页
           </el-button>
@@ -73,12 +66,18 @@
             {{ formatTime(row.paid_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right" align="center">
+        <el-table-column label="操作" width="300" fixed="right" align="center">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button size="small" :icon="View" @click="openDetail(row)">查看</el-button>
               <el-button
-                v-if="editMode"
+                v-if="row.status === 'pending'"
+                size="small"
+                type="warning"
+                :icon="CircleClose"
+                @click="closeOrder(row)"
+              >结束支付</el-button>
+              <el-button
                 size="small"
                 type="danger"
                 :icon="Delete"
@@ -140,9 +139,10 @@
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Delete, Edit, Search, View } from '@element-plus/icons-vue'
+import { ArrowLeft, CircleClose, Delete, Search, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  closeMockPaymentOrderApi,
   deleteMockPaymentOrderApi,
   getMockPaymentOrderDetailApi,
   getMockPaymentOrderHistoryApi,
@@ -154,7 +154,6 @@ const detailLoading = ref(false)
 const orders = ref([])
 const detailVisible = ref(false)
 const detailOrder = ref(null)
-const editMode = ref(false)
 
 const filter = reactive({
   start_date: '',
@@ -182,10 +181,6 @@ function statusType(status) {
   if (status === 'pending') return 'warning'
   if (status === 'expired') return 'info'
   return ''
-}
-
-function toggleEditMode() {
-  editMode.value = !editMode.value
 }
 
 function formatTime(value) {
@@ -272,6 +267,28 @@ async function deleteOrder(row) {
     await handleSearch()
   } catch {
     ElMessage.error('删除失败')
+  }
+}
+
+async function closeOrder(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定结束订单 ${orderNumber(row.order_uuid)} 的待支付状态吗？结束后该支付二维码将立即失效。`,
+      '结束支付确认',
+      { confirmButtonText: '结束支付', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    const closedOrder = await closeMockPaymentOrderApi(row.order_uuid)
+    ElMessage.success('订单已结束')
+    if (detailOrder.value?.order_uuid === row.order_uuid) {
+      detailOrder.value = { ...detailOrder.value, ...closedOrder }
+    }
+    await handleSearch()
+  } catch {
+    ElMessage.error('结束订单失败，请刷新后重试')
   }
 }
 
