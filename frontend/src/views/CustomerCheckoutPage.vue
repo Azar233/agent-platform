@@ -156,6 +156,7 @@ function productsFromDetection(detections, priceSummary) {
 function applyRealtimeDetection(result) {
   const item = { filename: 'IP Webcam 当前帧', detections: result.detections || [] }
   detectionResult.value = { source: 'camera', items: [item] }
+  activeModelVersionId.value = result.model_version_id || null
   checkoutSummary.value = result.price_summary
   products.value = productsFromDetection(item.detections, result.price_summary)
   detectionError.value = ''
@@ -234,14 +235,14 @@ async function removeProduct(classId) {
   try { await recalculateCart() }
   catch { products.value = previous }
 }
-function resetDemo() { detectionSequence++; pricingSequence++; detecting.value = false; pricing.value = false; products.value = []; detectionResult.value = null; checkoutSummary.value = null; detectionError.value = ''; if (sourceMode.value === 'camera') cameraDetectionRef.value?.start(); else selectSource('camera'); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); previewUrl.value = '' }
+function resetDemo() { detectionSequence++; pricingSequence++; detecting.value = false; pricing.value = false; products.value = []; detectionResult.value = null; checkoutSummary.value = null; activeModelVersionId.value = null; detectionError.value = ''; if (sourceMode.value === 'camera') cameraDetectionRef.value?.start(); else selectSource('camera'); if (previewUrl.value) URL.revokeObjectURL(previewUrl.value); previewUrl.value = '' }
 function formatMoney(value) { return `¥ ${Number(value || 0).toFixed(2)}` }
 async function goToPayment() {
-  const order = { items: products.value, itemCount: totalItems.value, totalPrice: totalPrice.value, currency: 'CNY' }
+  const order = { items: products.value, itemCount: totalItems.value, totalPrice: totalPrice.value, currency: 'CNY', modelVersionId: activeModelVersionId.value }
   sessionStorage.setItem('visionpay-checkout-order', JSON.stringify(order))
   creatingOrder.value = true
   try {
-    const paymentOrder = await createMockPaymentOrderApi(products.value)
+    const paymentOrder = await createMockPaymentOrderApi(products.value, activeModelVersionId.value)
     sessionStorage.setItem('visionpay-payment-order', JSON.stringify(paymentOrder))
     router.push({ path: '/checkout/payment', query: { token: paymentOrder.payment_token } })
   } finally {

@@ -22,12 +22,13 @@ export function calculateCheckoutApi(items, modelVersionId = null) {
   })
 }
 
-export function createMockPaymentOrderApi(items) {
+export function createMockPaymentOrderApi(items, modelVersionId = null) {
   return request.post('/mock-pay/orders', {
     items: items.map((item) => ({
       class_id: item.classId ?? item.class_id,
       quantity: item.quantity ?? item.count,
     })),
+    model_version_id: modelVersionId,
   })
 }
 
