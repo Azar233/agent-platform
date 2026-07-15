@@ -3,11 +3,14 @@
 处理用户注册、登录、鉴权等业务逻辑
 """
 
+from typing import Any
+
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.security import create_access_token, hash_password, verify_password
-from app.entity.db_models import User
+from app.entity.db_models import Role, User, UserRole
 
 
 class UserService:
@@ -90,10 +93,120 @@ class UserService:
     @staticmethod
     def get_user_by_id(db: Session, user_id: int) -> User:
         """根据 ID 获取用户"""
-        user = db.query(User).filter(User.id == user_id).first()
+        user = (
+            db.query(User)
+            .options(joinedload(User.user_roles).joinedload(UserRole.role))
+            .filter(User.id == user_id)
+            .first()
+        )
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
         return user
+
+    @staticmethod
+    def serialize_user(user: User) -> dict[str, Any]:
+        return {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "phone": user.phone,
+            "avatar": user.avatar,
+            "is_active": user.is_active,
+            "is_superuser": user.is_superuser,
+            "roles": [item.role.name for item in user.user_roles],
+            "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        }
+
+    @staticmethod
+    def is_admin(user: User) -> bool:
+        """Return whether the loaded user may inspect the system directory."""
+        return bool(user.is_superuser or any(item.role.name == "admin" for item in user.user_roles))
+
+    @staticmethod
+    def list_users(
+        db: Session,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: str | None = None,
+    ) -> dict:
+        query = db.query(User).options(joinedload(User.user_roles).joinedload(UserRole.role))
+        keyword = (keyword or "").strip()
+        if keyword:
+            pattern = f"%{keyword}%"
+            query = query.filter(or_(User.username.ilike(pattern), User.email.ilike(pattern)))
+        total = query.count()
+        users = (
+            query.order_by(User.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size,
+            "items": [UserService.serialize_user(user) for user in users],
+        }
+
+    @staticmethod
+    def list_roles(db: Session) -> list[dict]:
+        roles = db.query(Role).order_by(Role.id).all()
+        return [
+            {
+                "id": role.id,
+                "name": role.name,
+                "display_name": role.display_name,
+                "description": role.description,
+                "is_system": role.is_system,
+            }
+            for role in roles
+        ]
+
+    @staticmethod
+    def update_profile(
+        db: Session,
+        user_id: int,
+        *,
+        phone: str | None = None,
+        email: str | None = None,
+        avatar: str | None = None,
+    ) -> dict:
+        user = UserService.get_user_by_id(db, user_id)
+        if email is not None:
+            email = email.strip()
+            if not email:
+                raise HTTPException(status_code=422, detail="邮箱不能为空")
+            duplicate = db.query(User.id).filter(User.email == email, User.id != user_id).first()
+            if duplicate:
+                raise HTTPException(status_code=400, detail="该邮箱已被其他用户使用")
+            user.email = email
+        if phone is not None:
+            user.phone = phone.strip() or None
+        if avatar is not None:
+            user.avatar = avatar.strip() or None
+        db.commit()
+        db.refresh(user)
+        return {"message": "个人信息已更新", "user": UserService.serialize_user(user)}
+
+    @staticmethod
+    def change_password(
+        db: Session,
+        user_id: int,
+        *,
+        old_password: str,
+        new_password: str,
+    ) -> dict:
+        user = UserService.get_user_by_id(db, user_id)
+        if not verify_password(old_password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="旧密码不正确")
+        if verify_password(new_password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="新密码不能与旧密码相同")
+        user.hashed_password = hash_password(new_password)
+        db.commit()
+        return {"message": "密码修改成功"}
 
 
 # 全局单例
