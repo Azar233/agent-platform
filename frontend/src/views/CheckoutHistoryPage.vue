@@ -10,7 +10,7 @@
           <el-button
             :type="editMode ? 'success' : 'default'"
             :icon="Edit"
-            @click="editMode = !editMode"
+            @click="toggleEditMode"
           >
             {{ editMode ? '完成' : '编辑' }}
           </el-button>
@@ -73,7 +73,7 @@
             {{ formatTime(row.paid_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right" align="center">
+        <el-table-column label="操作" width="180" fixed="right" align="center">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button size="small" :icon="View" @click="openDetail(row)">查看</el-button>
@@ -154,6 +154,7 @@ const detailLoading = ref(false)
 const orders = ref([])
 const detailVisible = ref(false)
 const detailOrder = ref(null)
+const editMode = ref(false)
 
 const filter = reactive({
   start_date: '',
@@ -181,6 +182,10 @@ function statusType(status) {
   if (status === 'pending') return 'warning'
   if (status === 'expired') return 'info'
   return ''
+}
+
+function toggleEditMode() {
+  editMode.value = !editMode.value
 }
 
 function formatTime(value) {
