@@ -14,112 +14,197 @@ def _auth_headers(client):
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
-def test_price_category_200_can_be_created_and_updated(client):
+def _seed_dataset(client, db_session):
+    from app.entity.db_models import (
+        DatasetClassMapping,
+        DatasetVersion,
+        DetectionScene,
+        Product,
+        ProductPrice,
+        User,
+    )
+
     headers = _auth_headers(client)
-    created = client.post(
+    user = db_session.query(User).filter_by(username="price_user").one()
+    scene = DetectionScene(
+        name="price_scene",
+        display_name="价目表测试场景",
+        category="retail",
+        class_names=["cola", "chips"],
+        created_by=user.id,
+    )
+    cola = Product(
+        product_key="prod:price-cola",
+        name="可乐",
+        sku_name="cola",
+        barcode="6900000000101",
+    )
+    chips = Product(
+        product_key="prod:price-chips",
+        name="薯片",
+        sku_name="chips",
+        barcode="6900000000102",
+    )
+    unrelated = Product(
+        product_key="prod:unrelated",
+        name="其他数据集商品",
+        sku_name="unrelated",
+        barcode="6900000000199",
+    )
+    db_session.add_all([scene, cola, chips, unrelated])
+    db_session.flush()
+    dataset = DatasetVersion(
+        scene_id=scene.id,
+        version="price-v1",
+        name="价目表版本",
+        status="ready",
+        storage_path="dataset_versions/price-v1",
+        data_yaml_path="data.yaml",
+        class_count=2,
+        created_by=user.id,
+    )
+    db_session.add(dataset)
+    db_session.flush()
+    db_session.add_all(
+        [
+            DatasetClassMapping(
+                dataset_version_id=dataset.id,
+                class_index=0,
+                product_id=cola.id,
+                product_key=cola.product_key,
+                category_id=101,
+                class_name="cola",
+                display_name="可乐",
+            ),
+            DatasetClassMapping(
+                dataset_version_id=dataset.id,
+                class_index=1,
+                product_id=chips.id,
+                product_key=chips.product_key,
+                category_id=102,
+                class_name="chips",
+                display_name="薯片",
+            ),
+            ProductPrice(
+                product_id=cola.id,
+                category_id=101,
+                sku_name="cola",
+                name="可乐",
+                barcode=cola.barcode,
+                unit_price=3.5,
+                currency="CNY",
+            ),
+            ProductPrice(
+                product_id=unrelated.id,
+                category_id=199,
+                sku_name="unrelated",
+                name="其他数据集商品",
+                barcode=unrelated.barcode,
+                unit_price=99,
+                currency="CNY",
+            ),
+        ]
+    )
+    db_session.commit()
+    return headers, dataset, cola, chips, unrelated
+
+
+def test_prices_require_dataset_version_and_only_list_mapped_products(client, db_session):
+    headers, dataset, cola, chips, unrelated = _seed_dataset(client, db_session)
+
+    assert client.get("/api/prices", headers=headers).status_code == 422
+    response = client.get(
         "/api/prices",
         headers=headers,
-        json={
-            "category_id": 200,
-            "sku_name": "stationery",
-            "name": "文具",
-            "barcode": "6900000000200",
-            "unit_price": 2.5,
-            "currency": "CNY",
-        },
+        params={"dataset_version_id": dataset.id},
     )
-    assert created.status_code == 201
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    assert [row["product_id"] for row in rows] == [cola.id, chips.id]
+    assert unrelated.id not in {row["product_id"] for row in rows}
+    assert rows[0]["has_price"] is True
+    assert rows[0]["unit_price"] == 3.5
+    assert rows[1]["has_price"] is False
+    assert rows[1]["unit_price"] is None
 
+    searched = client.get(
+        "/api/prices",
+        headers=headers,
+        params={"dataset_version_id": dataset.id, "q": "price-chips"},
+    )
+    assert searched.status_code == 200
+    assert [row["product_id"] for row in searched.json()] == [chips.id]
+
+    outside = client.get(
+        f"/api/prices/{unrelated.id}",
+        headers=headers,
+        params={"dataset_version_id": dataset.id},
+    )
+    assert outside.status_code == 404
+    assert "不属于所选数据集版本" in outside.json()["message"]
+
+
+def test_update_only_existing_dataset_products_and_fill_missing_price(client, db_session):
+    from app.entity.db_models import ProductPrice
+
+    headers, dataset, cola, chips, unrelated = _seed_dataset(client, db_session)
     updated = client.put(
-        "/api/prices/200",
+        f"/api/prices/{cola.id}",
         headers=headers,
-        json={
-            "sku_name": "stationery-updated",
-            "name": "文具（已更新）",
-            "barcode": "6900000000201",
-            "unit_price": 3.75,
-            "currency": "CNY",
-        },
+        params={"dataset_version_id": dataset.id},
+        json={"name": "冰镇可乐", "unit_price": 4.25, "currency": "CNY"},
     )
-    assert updated.status_code == 200
-    assert updated.json()["category_id"] == 200
-    assert updated.json()["name"] == "文具（已更新）"
-    assert updated.json()["unit_price"] == 3.75
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["name"] == "冰镇可乐"
+    assert updated.json()["unit_price"] == 4.25
 
-    fetched = client.get("/api/prices/200", headers=headers)
-    assert fetched.status_code == 200
-    assert fetched.json()["barcode"] == "6900000000201"
-
-
-def test_search_prices_by_name_and_barcode(client):
-    headers = _auth_headers(client)
-    # 初始化两个商品
-    client.post(
-        "/api/prices",
+    configured = client.put(
+        f"/api/prices/{chips.id}",
         headers=headers,
-        json={
-            "category_id": 198,
-            "sku_name": "search_test_a",
-            "name": "搜索测试商品A",
-            "barcode": "6900000000198",
-            "unit_price": 1.0,
-            "currency": "CNY",
-        },
+        params={"dataset_version_id": dataset.id},
+        json={"name": "薯片", "unit_price": 6.5, "currency": "CNY"},
     )
-    client.post(
-        "/api/prices",
+    assert configured.status_code == 200, configured.text
+    assert configured.json()["has_price"] is True
+    assert configured.json()["product_id"] == chips.id
+    assert db_session.query(ProductPrice).filter_by(product_id=chips.id).one().unit_price == 6.5
+
+    rejected = client.put(
+        f"/api/prices/{unrelated.id}",
         headers=headers,
-        json={
-            "category_id": 199,
-            "sku_name": "search_test_b",
-            "name": "其他商品",
-            "barcode": "6900000000199",
-            "unit_price": 2.0,
-            "currency": "CNY",
-        },
+        params={"dataset_version_id": dataset.id},
+        json={"unit_price": 1},
     )
+    assert rejected.status_code == 404
 
-    by_name = client.get("/api/prices?q=搜索测试商品A", headers=headers)
-    assert by_name.status_code == 200
-    assert len(by_name.json()) == 1
-    assert by_name.json()[0]["category_id"] == 198
-
-    by_barcode = client.get("/api/prices?q=6900000000199", headers=headers)
-    assert by_barcode.status_code == 200
-    assert len(by_barcode.json()) == 1
-    assert by_barcode.json()[0]["category_id"] == 199
+    assert client.post("/api/prices", headers=headers, json={}).status_code in {404, 405}
+    assert client.post("/api/prices/batch-delete", headers=headers, json=[101]).status_code in {404, 405}
+    assert client.post("/api/prices/batch", headers=headers, json=[]).status_code in {404, 405}
 
 
-def test_batch_delete_prices(client):
-    headers = _auth_headers(client)
-    client.post(
-        "/api/prices",
+def test_clear_price_keeps_product_and_dataset_mapping(client, db_session):
+    from app.entity.db_models import DatasetClassMapping, Product, ProductPrice
+
+    headers, dataset, cola, _chips, unrelated = _seed_dataset(client, db_session)
+    rejected = client.delete(
+        f"/api/prices/{unrelated.id}",
         headers=headers,
-        json={
-            "category_id": 196,
-            "sku_name": "batch_a",
-            "name": "批量删除A",
-            "barcode": "6900000000196",
-            "unit_price": 1.0,
-            "currency": "CNY",
-        },
+        params={"dataset_version_id": dataset.id},
     )
-    client.post(
-        "/api/prices",
+    assert rejected.status_code == 404
+    assert db_session.query(ProductPrice).filter_by(product_id=unrelated.id).count() == 1
+
+    deleted = client.delete(
+        f"/api/prices/{cola.id}",
         headers=headers,
-        json={
-            "category_id": 197,
-            "sku_name": "batch_b",
-            "name": "批量删除B",
-            "barcode": "6900000000197",
-            "unit_price": 2.0,
-            "currency": "CNY",
-        },
+        params={"dataset_version_id": dataset.id},
     )
-
-    deleted = client.post("/api/prices/batch-delete", headers=headers, json=[196, 197])
-    assert deleted.status_code == 200
-    assert deleted.json()["deleted"] == 2
-
-    for cid in (196, 197):
-        assert client.get(f"/api/prices/{cid}", headers=headers).status_code == 404
+    assert deleted.status_code == 204, deleted.text
+    assert db_session.query(ProductPrice).filter_by(product_id=cola.id).count() == 0
+    assert db_session.query(Product).filter_by(id=cola.id).count() == 1
+    assert (
+        db_session.query(DatasetClassMapping)
+        .filter_by(dataset_version_id=dataset.id, product_id=cola.id)
+        .count()
+        == 1
+    )

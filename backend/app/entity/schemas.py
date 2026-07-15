@@ -229,16 +229,6 @@ class DetectionStatistics(ProjectBaseModel):
 # 三、商品价格
 # ══════════════════════════════════════════════════════════════
 
-class ProductPriceCreate(ProjectBaseModel):
-    """创建/更新商品价格"""
-    category_id: int = Field(..., description="检测类别 ID")
-    sku_name: Optional[str] = Field(None, description="SKU 英文名")
-    name: Optional[str] = Field(None, description="商品中文名")
-    barcode: Optional[str] = Field(None, description="商品条码")
-    unit_price: float = Field(..., ge=0, description="单价（元）")
-    currency: str = Field(default="CNY", description="货币")
-
-
 class ProductPriceUpdate(ProjectBaseModel):
     """部分更新商品价格（所有字段可选）"""
     sku_name: Optional[str] = Field(None, description="SKU 英文名")
@@ -248,22 +238,26 @@ class ProductPriceUpdate(ProjectBaseModel):
     currency: Optional[str] = Field(None, description="货币")
 
 
-class ProductPriceResponse(ProjectBaseModel):
-    """商品价格响应"""
-    id: int
-    category_id: int
+class DatasetProductPriceResponse(ProjectBaseModel):
+    """某个数据集版本商品映射及其价格配置。"""
+
+    dataset_version_id: int
+    mapping_id: int
+    class_index: int
+    product_id: int
+    product_key: str
+    category_id: Optional[int] = None
+    class_name: str
+    display_name: Optional[str] = None
+    price_id: Optional[int] = None
     sku_name: Optional[str] = None
     name: Optional[str] = None
     barcode: Optional[str] = None
-    unit_price: float
-    currency: str
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {
-        "from_attributes": True,
-        "protected_namespaces": (),
-    }
+    unit_price: Optional[float] = None
+    currency: str = "CNY"
+    has_price: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 # --- 数据集版本管理 ---

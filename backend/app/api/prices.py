@@ -1,156 +1,215 @@
-"""商品价格管理 API"""
+"""Dataset-version scoped product price management API."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.database.session import get_db
-from app.entity.db_models import ProductPrice
-from app.entity.schemas import ProductPriceCreate, ProductPriceResponse, ProductPriceUpdate
+from app.entity.db_models import DatasetClassMapping, DatasetVersion, Product, ProductPrice
+from app.entity.schemas import DatasetProductPriceResponse, ProductPriceUpdate
 
 router = APIRouter(prefix="/api/prices", tags=["商品价格"])
 
 
-@router.get("", response_model=list[ProductPriceResponse], summary="获取所有商品价格")
-def list_prices(
-    q: str | None = Query(None, description="按商品中文名或条码搜索"),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """列出所有 SKU 的价格，按 category_id 排序；支持按中文名或条码搜索。"""
-    query = db.query(ProductPrice)
-    if q:
-        keyword = f"%{q.strip()}%"
-        query = query.filter(
-            or_(
-                ProductPrice.name.ilike(keyword),
-                ProductPrice.barcode.ilike(keyword),
-            )
+def _dataset(db: Session, dataset_version_id: int) -> DatasetVersion:
+    dataset = db.query(DatasetVersion).filter(DatasetVersion.id == dataset_version_id).first()
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="数据集版本不存在")
+    return dataset
+
+
+def _mapping(db: Session, dataset_version_id: int, product_id: int) -> DatasetClassMapping:
+    _dataset(db, dataset_version_id)
+    mapping = (
+        db.query(DatasetClassMapping)
+        .filter(
+            DatasetClassMapping.dataset_version_id == dataset_version_id,
+            DatasetClassMapping.product_id == product_id,
         )
-    return query.order_by(ProductPrice.category_id).all()
-
-
-@router.get("/{category_id}", response_model=ProductPriceResponse, summary="获取单个商品价格")
-def get_price(
-    category_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """根据 category_id 查询单个商品价格。"""
-    price = db.query(ProductPrice).filter(ProductPrice.category_id == category_id).first()
-    if not price:
-        raise HTTPException(status_code=404, detail="该商品未设置价格")
-    return price
-
-
-@router.post(
-    "",
-    response_model=ProductPriceResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="创建单个商品价格",
-)
-def create_price(
-    payload: ProductPriceCreate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """创建单个商品价格。category_id 不能已存在。"""
-    existing = (
-        db.query(ProductPrice)
-        .filter(ProductPrice.category_id == payload.category_id)
         .first()
     )
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"category_id={payload.category_id} 的商品已存在",
-        )
-
-    price = ProductPrice(**payload.model_dump())
-    db.add(price)
-    db.commit()
-    db.refresh(price)
-    return price
+    if mapping is None:
+        raise HTTPException(status_code=404, detail="该商品不属于所选数据集版本")
+    return mapping
 
 
-@router.put("/{category_id}", response_model=ProductPriceResponse, summary="更新单个商品价格")
-def update_price(
-    category_id: int,
-    payload: ProductPriceUpdate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """根据 category_id 更新单个商品价格。"""
-    price = db.query(ProductPrice).filter(ProductPrice.category_id == category_id).first()
-    if not price:
-        raise HTTPException(status_code=404, detail="该商品未设置价格")
-
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(price, field, value)
-
-    db.commit()
-    db.refresh(price)
-    return price
-
-
-@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除单个商品价格")
-def delete_price(
-    category_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """根据 category_id 删除单个商品价格。"""
-    price = db.query(ProductPrice).filter(ProductPrice.category_id == category_id).first()
-    if not price:
-        raise HTTPException(status_code=404, detail="该商品未设置价格")
-
-    db.delete(price)
-    db.commit()
+def _price_for_mapping(db: Session, mapping: DatasetClassMapping) -> ProductPrice | None:
+    price = (
+        db.query(ProductPrice)
+        .filter(ProductPrice.product_id == mapping.product_id)
+        .first()
+    )
+    if price is not None or mapping.category_id is None:
+        return price
+    legacy = (
+        db.query(ProductPrice)
+        .filter(ProductPrice.category_id == mapping.category_id)
+        .first()
+    )
+    if legacy is not None and legacy.product_id in {None, mapping.product_id}:
+        return legacy
     return None
 
 
-@router.post("/batch-delete", status_code=status.HTTP_200_OK, summary="批量删除商品价格")
-def batch_delete_prices(
-    category_ids: list[int],
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """根据 category_id 列表批量删除商品价格。"""
-    if not category_ids:
-        raise HTTPException(status_code=400, detail="category_id 列表不能为空")
-
-    deleted = (
-        db.query(ProductPrice)
-        .filter(ProductPrice.category_id.in_(category_ids))
-        .delete(synchronize_session=False)
+def _serialize(
+    db: Session,
+    mapping: DatasetClassMapping,
+    price: ProductPrice | None = None,
+) -> dict:
+    price = price if price is not None else _price_for_mapping(db, mapping)
+    product = (
+        db.query(Product).filter(Product.id == mapping.product_id).first()
+        if mapping.product_id is not None
+        else None
     )
-    db.commit()
-    return {"message": "批量删除成功", "deleted": deleted}
+    return {
+        "dataset_version_id": mapping.dataset_version_id,
+        "mapping_id": mapping.id,
+        "class_index": mapping.class_index,
+        "product_id": mapping.product_id,
+        "product_key": mapping.product_key,
+        "category_id": price.category_id if price is not None else mapping.category_id,
+        "class_name": mapping.class_name,
+        "display_name": mapping.display_name,
+        "price_id": price.id if price is not None else None,
+        "sku_name": price.sku_name if price is not None else getattr(product, "sku_name", None),
+        "name": price.name if price is not None else (
+            getattr(product, "name", None) or mapping.display_name
+        ),
+        "barcode": price.barcode if price is not None else getattr(product, "barcode", None),
+        "unit_price": price.unit_price if price is not None else None,
+        "currency": (price.currency if price is not None else None) or "CNY",
+        "has_price": price is not None,
+        "created_at": price.created_at if price is not None else None,
+        "updated_at": price.updated_at if price is not None else None,
+    }
 
 
-@router.post("/batch", summary="批量设置商品价格")
-def batch_set_prices(
-    items: list[ProductPriceCreate],
+@router.get("", response_model=list[DatasetProductPriceResponse], summary="获取数据集版本价目表")
+def list_prices(
+    dataset_version_id: int = Query(..., ge=1, description="要管理的数据集版本 ID"),
+    q: str | None = Query(None, description="按商品名称、类别、条码或稳定 ID 搜索"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """批量创建或更新商品价格。如果 category_id 已存在则更新，否则新增。"""
-    for item in items:
-        existing = (
+    """Only return products already mapped by the selected dataset version."""
+    del current_user
+    _dataset(db, dataset_version_id)
+    mappings = (
+        db.query(DatasetClassMapping)
+        .filter(DatasetClassMapping.dataset_version_id == dataset_version_id)
+        .order_by(DatasetClassMapping.class_index)
+        .all()
+    )
+    rows = [_serialize(db, mapping) for mapping in mappings if mapping.product_id is not None]
+    keyword = (q or "").strip().lower()
+    if not keyword:
+        return rows
+    searchable_fields = (
+        "product_id",
+        "product_key",
+        "class_index",
+        "class_name",
+        "display_name",
+        "sku_name",
+        "name",
+        "barcode",
+    )
+    return [
+        row
+        for row in rows
+        if any(keyword in str(row.get(field) or "").lower() for field in searchable_fields)
+    ]
+
+
+@router.get(
+    "/{product_id}",
+    response_model=DatasetProductPriceResponse,
+    summary="获取数据集版本中的单个商品价格",
+)
+def get_price(
+    product_id: int,
+    dataset_version_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    del current_user
+    mapping = _mapping(db, dataset_version_id, product_id)
+    return _serialize(db, mapping)
+
+
+@router.put(
+    "/{product_id}",
+    response_model=DatasetProductPriceResponse,
+    summary="更新数据集版本中已有商品的价格",
+)
+def update_price(
+    product_id: int,
+    payload: ProductPriceUpdate,
+    dataset_version_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Update a stable product only after proving it belongs to the selected dataset."""
+    del current_user
+    mapping = _mapping(db, dataset_version_id, product_id)
+    price = _price_for_mapping(db, mapping)
+    values = payload.model_dump(exclude_unset=True)
+    if price is None:
+        if values.get("unit_price") is None:
+            raise HTTPException(status_code=400, detail="该商品尚未设置价格，请填写单价")
+        category_id = mapping.category_id
+        category_in_use = (
             db.query(ProductPrice)
-            .filter(ProductPrice.category_id == item.category_id)
+            .filter(ProductPrice.category_id == category_id)
             .first()
+            if category_id is not None
+            else None
         )
-        if existing:
-            existing.unit_price = item.unit_price
-            existing.sku_name = item.sku_name or existing.sku_name
-            existing.name = item.name or existing.name
-            existing.barcode = item.barcode or existing.barcode
-            existing.currency = item.currency or existing.currency
-        else:
-            db.add(ProductPrice(**item.model_dump()))
+        if category_id is None or category_in_use is not None:
+            category_id = int(db.query(func.max(ProductPrice.category_id)).scalar() or 0) + 1
+        product = db.query(Product).filter(Product.id == product_id).first()
+        price = ProductPrice(
+            product_id=product_id,
+            category_id=category_id,
+            sku_name=values.get("sku_name") or getattr(product, "sku_name", None) or mapping.class_name,
+            name=values.get("name") or getattr(product, "name", None) or mapping.display_name,
+            barcode=values.get("barcode") or getattr(product, "barcode", None),
+            unit_price=values["unit_price"],
+            currency=values.get("currency") or "CNY",
+        )
+        db.add(price)
+    else:
+        if price.product_id is None:
+            price.product_id = product_id
+        for field, value in values.items():
+            setattr(price, field, value)
+
     db.commit()
-    return {"message": "价格设置成功", "count": len(items)}
+    db.refresh(price)
+    return _serialize(db, mapping, price)
+
+
+@router.delete(
+    "/{product_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="清除数据集版本中已有商品的价格配置",
+)
+def delete_price(
+    product_id: int,
+    dataset_version_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Delete only the price record; the stable product and dataset mapping remain intact."""
+    del current_user
+    mapping = _mapping(db, dataset_version_id, product_id)
+    price = _price_for_mapping(db, mapping)
+    if price is None:
+        raise HTTPException(status_code=404, detail="该商品尚未设置价格")
+    db.delete(price)
+    db.commit()
+    return None

@@ -468,6 +468,17 @@ class_index x_center y_center width height
 
 只有草稿可以删除；存在派生关系或训练关联时，服务端会保护相关记录。
 
+### 7.7 按数据集版本管理价目表
+
+进入“价目表管理”后必须先选择一个已注册的数据集版本。页面只展示该版本 `DatasetClassMapping` 中已经存在的商品，不能在价目表页面新增商品，也不提供批量删除：
+
+1. 按场景、版本号或名称搜索并选择数据集版本。
+2. 按商品名、条码、`product_id` 或 `product_key` 搜索版本内商品。
+3. 编辑已有价格，或为版本中已有但尚未定价的商品补充价格。
+4. “清除价格”只删除 `ProductPrice`，不会删除稳定商品、类别映射、图片或标注。
+
+价格通过稳定 `product_id` 关联，因此同一个商品出现在多个数据集版本时，这些版本会共同使用更新后的价格。商品种类的新增和删除仍必须在“数据集版本”页面的派生草稿中完成。
+
 ## 8. 模型训练与模型版本
 
 ### 8.1 启动训练
@@ -684,7 +695,7 @@ Authorization: Bearer <JWT>
 | `/api/detection` | 单图、批量、ZIP 和视频检测 |
 | `/api/camera` | IP Webcam 配置与代理流 |
 | `/api/chat` | Agent 状态、会话、附件和 SSE 对话 |
-| `/api/prices` | 商品价格 CRUD 和批量操作 |
+| `/api/prices` | 按数据集版本查看、更新或清除已有商品价格 |
 | `/api/checkout` | 结算检测与重新计价 |
 | `/api/mock-pay` | 模拟支付订单、确认、状态和历史 |
 | `/api/history` | 检测任务历史 |
@@ -780,7 +791,7 @@ npm run preview
 
 ### 检测有类别但没有价格
 
-新版模型检查其绑定数据集的 `DatasetClassMapping` 和 `ProductPrice.product_id`；旧模型检查 `category_id = class_id + 1`。在“价目表管理”补齐对应商品价格后重新检测或计价。
+新版模型检查其绑定数据集的 `DatasetClassMapping` 和 `ProductPrice.product_id`；旧模型检查 `category_id = class_id + 1`。在“价目表管理”先选择检测模型绑定的数据集版本，再补齐对应商品价格并重新检测或计价。
 
 ### Redis 或 MinIO 不可用是否还能启动
 
