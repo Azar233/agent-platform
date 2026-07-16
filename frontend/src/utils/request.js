@@ -57,7 +57,7 @@ request.interceptors.response.use(
           ElMessage.error('没有权限执行此操作')
           break
         case 404:
-          ElMessage.error('请求的资源不存在')
+          ElMessage.error(response.data?.detail || '请求的资源不存在')
           break
         case 422:
           // Pydantic 验证错误

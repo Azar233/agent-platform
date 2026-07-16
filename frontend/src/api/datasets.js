@@ -18,7 +18,7 @@ export function importBaselineDatasetApi(data) {
 
 export function importAvailableModelApi(formData) {
   return request.post('/datasets/import-available-model', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+    // Let the browser append the multipart boundary for the selected best.pt.
     timeout: 0,
   })
 }
