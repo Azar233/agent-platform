@@ -435,11 +435,13 @@ def _camera_options(payload: dict) -> dict:
     import torch
 
     cuda_available = torch.cuda.is_available()
-    # 默认优先使用 GPU；如果请求了 gpu/cuda 但 CUDA 不可用则明确报错。
     requested_mode = str(payload.get("mode", "cuda" if cuda_available else "cpu")).lower()
     mode = "cuda" if requested_mode in ("cuda", "gpu") else "cpu"
+    warning = None
+    # 请求 GPU 但环境不支持时自动降级到 CPU，而不是直接断开连接。
     if mode == "cuda" and not cuda_available:
-        raise ValueError("当前 PyTorch 环境未启用 CUDA，实时检测仅支持 cpu 模式")
+        warning = "当前 PyTorch 环境未启用 CUDA，实时检测已自动切换为 cpu 模式"
+        mode = "cpu"
     conf = float(payload.get("conf", settings.CAMERA_CONFIDENCE))
     iou = float(payload.get("iou", settings.CAMERA_IOU))
     if not 0.05 <= conf <= 0.95 or not 0.05 <= iou <= 0.95:
@@ -461,6 +463,7 @@ def _camera_options(payload: dict) -> dict:
         "iou": iou,
         "scene_id": scene_id,
         "camera_url": camera_url,
+        "warning": warning,
     }
 
 
@@ -513,6 +516,7 @@ async def camera_detection_ws(websocket: WebSocket):
                 "type": "config_ok",
                 "mode": options["mode"],
                 "device": "cuda" if torch.cuda.is_available() else "cpu",
+                "warning": options.get("warning"),
                 "target_fps": settings.CAMERA_TARGET_FPS,
                 "image_size": settings.CAMERA_IMAGE_SIZE,
                 "model": model_context["model_name"],
