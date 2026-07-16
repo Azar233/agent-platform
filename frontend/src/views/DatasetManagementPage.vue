@@ -116,11 +116,6 @@
           </template>
         </el-table-column>
         <el-table-column prop="class_count" label="类别" width="82" align="center" />
-        <el-table-column label="内容指纹" min-width="160">
-          <template #default="{ row }">
-            <code :title="row.content_hash || ''">{{ shortHash(row.content_hash) }}</code>
-          </template>
-        </el-table-column>
         <el-table-column label="更新时间" width="170">
           <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
         </el-table-column>
@@ -883,11 +878,6 @@ function statusType(status) {
 
 function formatTime(value) {
   return value ? new Date(value).toLocaleString() : '-'
-}
-
-function shortHash(value) {
-  if (!value) return '未填写'
-  return value.length > 20 ? `${value.slice(0, 12)}…${value.slice(-7)}` : value
 }
 
 function formatBytes(value) {
