@@ -258,8 +258,20 @@
         show-icon
       />
       <el-form :model="modelImportForm" label-width="118px" class="model-import-form">
-        <el-form-item label="场景 ID" required>
-          <el-input-number v-model="modelImportForm.scene_id" :min="1" controls-position="right" />
+        <el-form-item label="检测场景" required>
+          <el-select
+            v-model="modelImportForm.scene_id"
+            placeholder="请选择模型所属场景"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="scene in sceneOptions"
+              :key="scene.id"
+              :label="`${scene.display_name || scene.name}（#${scene.id}）`"
+              :value="scene.id"
+            />
+          </el-select>
+          <p v-if="!sceneOptions.length" class="form-tip">当前没有可用的检测场景，请先创建或初始化检测场景。</p>
         </el-form-item>
         <el-form-item label="版本号" required>
           <el-input v-model.trim="modelImportForm.version" placeholder="例如 checkout-model-v1" />
@@ -309,7 +321,12 @@
       </el-form>
       <template #footer>
         <el-button @click="modelImportVisible = false">取消</el-button>
-        <el-button type="primary" :loading="modelImportSubmitting" @click="submitModelImport">开始导入</el-button>
+        <el-button
+          type="primary"
+          :loading="modelImportSubmitting"
+          :disabled="!sceneOptions.length"
+          @click="submitModelImport"
+        >开始导入</el-button>
       </template>
     </el-dialog>
 
@@ -621,6 +638,7 @@ import {
   buildDatasetProductCommitPayload,
 } from '@/utils/datasetAnnotationReview'
 import { collectProductFolderFiles } from '@/utils/datasetProductFiles'
+import { getScenes } from '@/api/history'
 import {
   archiveDatasetVersionApi,
   commitDatasetProductTaskApi,
@@ -644,6 +662,7 @@ import {
 const loading = ref(false)
 const submitting = ref(false)
 const rows = ref([])
+const sceneOptions = ref([])
 const total = ref(0)
 const checkFilesystem = ref(false)
 const dialogVisible = ref(false)
@@ -700,8 +719,8 @@ const baselineForm = ref({
   copy_files: true,
   set_current: true,
 })
-const emptyModelImportForm = () => ({
-  scene_id: 1,
+const emptyModelImportForm = (sceneId = null) => ({
+  scene_id: sceneId,
   version: '',
   name: '',
   description: '',
@@ -884,9 +903,29 @@ function openBaselineDialog() {
 }
 
 function openModelImportDialog() {
-  modelImportForm.value = emptyModelImportForm()
+  const preferredSceneId = currentDataset.value?.scene_id || sceneOptions.value[0]?.id || null
+  modelImportForm.value = emptyModelImportForm(preferredSceneId)
   modelImportFile.value = null
   modelImportVisible.value = true
+}
+
+async function fetchScenes() {
+  try {
+    const result = await getScenes()
+    sceneOptions.value = result.scenes || []
+  } catch {
+    const uniqueScenes = new Map()
+    for (const dataset of rows.value) {
+      if (!uniqueScenes.has(dataset.scene_id)) {
+        uniqueScenes.set(dataset.scene_id, {
+          id: dataset.scene_id,
+          name: dataset.scene_name || `scene_${dataset.scene_id}`,
+          display_name: dataset.scene_name || `场景 #${dataset.scene_id}`,
+        })
+      }
+    }
+    sceneOptions.value = [...uniqueScenes.values()]
+  }
 }
 
 function handleModelSourceModeChange() {
@@ -913,7 +952,7 @@ function handleModelFileExceed(files) {
 async function submitModelImport() {
   const payload = modelImportForm.value
   if (!payload.scene_id || !payload.version || !payload.name) {
-    ElMessage.warning('请填写场景 ID、版本号和显示名称')
+    ElMessage.warning('请选择检测场景，并填写版本号和显示名称')
     return
   }
   if (payload.source_mode === 'upload' && !modelImportFile.value) {
@@ -1351,7 +1390,10 @@ onBeforeUnmount(() => {
     void discardCurrentAnnotationStage()
   }
 })
-onMounted(fetchDatasets)
+onMounted(async () => {
+  await fetchDatasets()
+  await fetchScenes()
+})
 </script>
 
 <style lang="scss" scoped>
