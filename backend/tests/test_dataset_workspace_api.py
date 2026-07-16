@@ -96,7 +96,7 @@ def test_managed_dataset_end_to_end(client, db_session, tmp_path, monkeypatch):
     )
     assert baseline_response.status_code == 201, baseline_response.text
     baseline = baseline_response.json()
-    assert baseline["status"] == "ready"
+    assert baseline["status"] == "pending_train"
     assert baseline["is_current"] is True
     assert baseline["total_image_count"] == 6
     assert all(item["product_id"] for item in baseline["classes"])
@@ -391,7 +391,7 @@ def test_managed_dataset_end_to_end(client, db_session, tmp_path, monkeypatch):
     )
     assert freeze_response.status_code == 200, freeze_response.text
     frozen = freeze_response.json()
-    assert frozen["status"] == "ready"
+    assert frozen["status"] == "pending_train"
 
     from app.api import training as training_api
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.entity.db_models import DetectionScene, ModelVersion, User
+from app.entity.db_models import DatasetVersion, DetectionScene, ModelVersion, User
 
 
 def _auth_headers(client):
@@ -76,7 +76,7 @@ def test_import_available_model_from_server_path_builds_catalog_and_prices(
     result = response.json()
     dataset = result["dataset"]
     model = result["model_version"]
-    assert dataset["status"] == "ready"
+    assert dataset["status"] == "published"
     assert dataset["is_current"] is True
     assert dataset["training_status"] == "trained"
     assert dataset["class_count"] == 2
@@ -191,3 +191,57 @@ def test_import_available_model_from_upload_copies_weights(
 
     stored = db_session.query(ModelVersion).filter_by(id=result["model_version"]["id"]).one()
     assert stored.dataset_version_id == result["dataset"]["id"]
+
+
+def test_archive_model_endpoint_archives_and_syncs_dataset_status(
+    client,
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    from app.config.settings import settings
+
+    headers = _auth_headers(client)
+    scene = _scene(db_session)
+    _mock_model_inspection(monkeypatch)
+    managed_root = tmp_path / "managed"
+    monkeypatch.setattr(settings, "DATASET_VERSION_ROOT", str(managed_root))
+    source = tmp_path / "best.pt"
+    source.write_bytes(b"fake-yolo-weights")
+
+    response = client.post(
+        "/api/datasets/import-available-model",
+        headers=headers,
+        data={
+            "scene_id": str(scene.id),
+            "version": "archive-model-v1",
+            "name": "Archive model v1",
+            "source_path": str(source),
+            "set_current": "true",
+            "set_default": "true",
+        },
+    )
+    assert response.status_code == 201, response.text
+    dataset_id = response.json()["dataset"]["id"]
+    model_id = response.json()["model_version"]["id"]
+    assert response.json()["dataset"]["status"] == "published"
+    assert response.json()["dataset"]["is_in_use"] is True
+
+    archive_response = client.post(
+        f"/api/training/model-versions/{model_id}/archive",
+        headers=headers,
+    )
+    assert archive_response.status_code == 200, archive_response.text
+    archived = archive_response.json()
+    assert archived["status"] == "archived"
+    assert archived["is_default"] is False
+
+    db_session.expire_all()
+    dataset = db_session.query(DatasetVersion).filter_by(id=dataset_id).one()
+    assert dataset.status == "pending_train"
+    assert dataset.is_current is False
+
+    archived_model = db_session.query(ModelVersion).filter_by(id=model_id).one()
+    assert archived_model.status == "archived"
+    assert archived_model.is_default is False
+

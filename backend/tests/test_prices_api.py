@@ -57,7 +57,7 @@ def _seed_dataset(client, db_session):
         scene_id=scene.id,
         version="price-v1",
         name="价目表版本",
-        status="ready",
+        status="pending_train",
         storage_path="dataset_versions/price-v1",
         data_yaml_path="data.yaml",
         class_count=2,

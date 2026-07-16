@@ -30,9 +30,19 @@
         <small>仍可编辑和补充类别映射</small>
       </article>
       <article class="summary-card">
-        <span>已冻结</span>
-        <strong>{{ statusCount.ready }}</strong>
-        <small>内容不可修改，可用于训练或派生</small>
+        <span>待训练</span>
+        <strong>{{ statusCount.pending_train }}</strong>
+        <small>已冻结，等待首次训练</small>
+      </article>
+      <article class="summary-card">
+        <span>训练中</span>
+        <strong>{{ statusCount.training }}</strong>
+        <small>有进行中的训练任务</small>
+      </article>
+      <article class="summary-card">
+        <span>已发布</span>
+        <strong>{{ statusCount.published }}</strong>
+        <small>训练完成，可用于检测</small>
       </article>
     </section>
 
@@ -47,7 +57,9 @@
           />
           <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="草稿" value="draft" />
-            <el-option label="已冻结" value="ready" />
+            <el-option label="待训练" value="pending_train" />
+            <el-option label="训练中" value="training" />
+            <el-option label="已发布" value="published" />
             <el-option label="已归档" value="archived" />
           </el-select>
           <el-button type="primary" plain @click="fetchDatasets">查询</el-button>
@@ -83,9 +95,12 @@
             <span>{{ row.scene_name || `#${row.scene_id}` }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="150">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+            <div class="status-tags">
+              <el-tag :type="statusType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+              <el-tag v-if="row.is_in_use" type="success" size="small">使用中</el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="图片" width="170">
@@ -101,11 +116,6 @@
           </template>
         </el-table-column>
         <el-table-column prop="class_count" label="类别" width="82" align="center" />
-        <el-table-column label="内容指纹" min-width="160">
-          <template #default="{ row }">
-            <code :title="row.content_hash || ''">{{ shortHash(row.content_hash) }}</code>
-          </template>
-        </el-table-column>
         <el-table-column label="更新时间" width="170">
           <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
         </el-table-column>
@@ -119,12 +129,12 @@
               <el-button v-if="row.status === 'draft'" class="row-action-button" size="small" :icon="CircleCheck" @click="validateRow(row)">校验</el-button>
               <el-button v-if="row.status === 'draft'" class="row-action-button is-primary-action" size="small" :icon="Lock" @click="freezeRow(row)">冻结</el-button>
               <el-button
-                v-if="row.status === 'ready' && (!row.is_current || row.extra_metadata?.catalog_only)"
+                v-if="['pending_train', 'training', 'published'].includes(row.status)"
                 class="row-action-button"
                 size="small"
                 @click="archiveRow(row)"
               >归档</el-button>
-              <el-button v-if="['ready', 'archived'].includes(row.status)" class="row-action-button is-primary-action" size="small" @click="openDeriveDialog(row)">派生版本</el-button>
+              <el-button v-if="row.status === 'archived'" class="row-action-button is-primary-action" size="small" @click="openDeriveDialog(row)">派生版本</el-button>
               <el-button v-if="row.status === 'draft'" class="row-action-button is-danger-action" size="small" :icon="Delete" @click="deleteRow(row)">删除草稿</el-button>
             </div>
           </template>
@@ -840,24 +850,34 @@ const filteredDeleteProducts = computed(() => {
 })
 const statusCount = computed(() => ({
   draft: rows.value.filter((item) => item.status === 'draft').length,
-  ready: rows.value.filter((item) => item.status === 'ready').length,
+  pending_train: rows.value.filter((item) => item.status === 'pending_train').length,
+  training: rows.value.filter((item) => item.status === 'training').length,
+  published: rows.value.filter((item) => item.status === 'published').length,
+  archived: rows.value.filter((item) => item.status === 'archived').length,
 }))
 
 function statusText(status) {
-  return { draft: '草稿', ready: '已冻结', archived: '已归档' }[status] || status
+  return {
+    draft: '草稿',
+    pending_train: '待训练',
+    training: '训练中',
+    published: '已发布',
+    archived: '已归档',
+  }[status] || status
 }
 
 function statusType(status) {
-  return { draft: 'warning', ready: 'success', archived: 'info' }[status] || 'info'
+  return {
+    draft: 'warning',
+    pending_train: 'primary',
+    training: 'warning',
+    published: 'success',
+    archived: 'info',
+  }[status] || 'info'
 }
 
 function formatTime(value) {
   return value ? new Date(value).toLocaleString() : '-'
-}
-
-function shortHash(value) {
-  if (!value) return '未填写'
-  return value.length > 20 ? `${value.slice(0, 12)}…${value.slice(-7)}` : value
 }
 
 function formatBytes(value) {
@@ -1359,10 +1379,11 @@ async function freezeRow(row) {
 }
 
 async function archiveRow(row) {
-  const catalogHint = row.extra_metadata?.catalog_only
-    ? '归档后该模型将不再用于检测；若它是当前检测模型，系统会自动切换到其他可用模型。'
-    : ''
-  await ElMessageBox.confirm(`确定归档 ${row.version} 吗？${catalogHint}`, '归档数据集', { type: 'warning' })
+  let message = `确定归档版本 ${row.version} 吗？归档后该数据集将不再用于训练和检测。`
+  if (row.active_model_count > 0) {
+    message += `该数据集下还有 ${row.active_model_count} 个活跃模型，归档后会一并归档。`
+  }
+  await ElMessageBox.confirm(message, '归档数据集', { type: 'warning' })
   await archiveDatasetVersionApi(row.id)
   ElMessage.success('数据集已归档')
   await fetchDatasets()
@@ -1397,7 +1418,7 @@ onMounted(async () => {
 .page-header h2 { margin: 5px 0 8px; font-size: 25px; color: $text-primary; }
 .page-header p { max-width: 720px; margin: 0; color: $text-secondary; font-size: 13px; line-height: 1.7; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
-.summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.summary-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
 .summary-card { min-width: 0; padding: 18px 20px; border: 1px solid $border-color; border-radius: $border-radius-md; background: $surface-color; box-shadow: $shadow-sm; }
 .summary-card span, .summary-card small { display: block; color: $text-secondary; }
 .summary-card strong { display: block; overflow: hidden; margin: 8px 0 6px; color: $text-primary; font-size: 25px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1412,6 +1433,7 @@ onMounted(async () => {
 .model-import-upload { width: 100%; }
 .model-import-upload :deep(.el-upload), .model-import-upload :deep(.el-upload-dragger) { width: 100%; }
 .model-import-switches { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.status-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .version-title { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px 8px; min-width: 0; }.version-title strong { flex: 1 0 100%; min-width: 0; line-height: 1.35; overflow-wrap: anywhere; }.current-version-tag { flex: 0 0 auto; margin-top: 1px; border-radius: 999px; font-weight: 600; }.version-name { display: block; margin-top: 5px; color: $text-secondary; font-size: 12px; line-height: 1.45; }
 .split-cell strong, .split-cell span { display: block; }.split-cell span { margin-top: 3px; color: $text-secondary; font-size: 11px; }
 code { color: $text-secondary; font-size: 11px; }
@@ -1444,6 +1466,6 @@ code { color: $text-secondary; font-size: 11px; }
 .detail-heading { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }.detail-heading span { color: $text-secondary; font-size: 12px; }.detail-heading h3 { margin: 5px 0 0; font-size: 21px; }
 .validation-box { margin: 18px 0; padding: 13px 15px; border: 1px solid $success-color; border-radius: 9px; color: $success-color; background: color-mix(in srgb, $success-color 12%, transparent); }.validation-box.invalid { border-color: $danger-color; color: $danger-color; background: color-mix(in srgb, $danger-color 10%, transparent); }.validation-box strong, .validation-box span { display: block; }.validation-box span { margin-top: 3px; font-size: 11px; }.validation-box ul { margin: 8px 0 0; padding-left: 18px; }
 .mapping-header { display: flex; align-items: center; justify-content: space-between; margin: 20px 0 10px; }.mapping-header h4 { margin: 0; }.mapping-header span { color: $text-secondary; font-size: 12px; }
-@media (max-width: 1100px) { .summary-grid { grid-template-columns: repeat(2, 1fr); }.toolbar { align-items: flex-start; flex-direction: column; }.count-grid { grid-template-columns: repeat(2, 1fr); }.product-setup-grid { grid-template-columns: repeat(2, 1fr); }.split-folder-grid { grid-template-columns: 1fr; }.review-workspace { grid-template-columns: 220px minmax(0, 1fr); } }
+@media (max-width: 1100px) { .summary-grid { grid-template-columns: repeat(3, 1fr); }.toolbar { align-items: flex-start; flex-direction: column; }.count-grid { grid-template-columns: repeat(2, 1fr); }.product-setup-grid { grid-template-columns: repeat(2, 1fr); }.split-folder-grid { grid-template-columns: 1fr; }.review-workspace { grid-template-columns: 220px minmax(0, 1fr); } }
 @media (max-width: 700px) { .dataset-page { padding: 12px; }.page-header { flex-direction: column; }.summary-grid, .form-grid, .count-grid, .product-setup-grid { grid-template-columns: 1fr; }.filters { align-items: stretch; flex-direction: column; width: 100%; }.filters .el-input-number, .filters .el-select { width: 100%; }.review-heading, .active-review-actions { align-items: stretch; flex-direction: column; }.review-summary { justify-content: flex-start; }.review-workspace { display: block; }.annotation-thumbnails { display: flex; max-height: none; overflow-x: auto; border-right: 0; border-bottom: 1px solid $border-color; }.annotation-thumbnail { flex: 0 0 250px; }.annotation-editor-panel { padding: 10px; } }
 </style>

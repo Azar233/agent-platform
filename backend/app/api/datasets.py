@@ -256,7 +256,9 @@ def get_dataset_operation_status(
 @router.get("", response_model=DatasetVersionListResponse, summary="数据集版本列表")
 def list_dataset_versions(
     scene_id: int | None = Query(None, ge=1),
-    dataset_status: Literal["draft", "ready", "archived"] | None = Query(
+    dataset_status: Literal[
+        "draft", "pending_train", "training", "published", "archived"
+    ] | None = Query(
         None,
         alias="status",
     ),

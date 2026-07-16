@@ -55,6 +55,21 @@ def set_default_detection_model(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/model-versions/{model_version_id}/archive", summary="归档检测模型版本")
+def archive_detection_model(
+    model_version_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    del current_user
+    try:
+        model = model_version_service.archive_model(db, model_version_id=model_version_id)
+        return model_version_service.serialize(db, model)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def _resolve_path(path_value: str | None) -> Path | None:
     if not path_value:
         return None
@@ -108,7 +123,8 @@ def _get_registered_dataset(
 
     if dataset is None:
         return None
-    allowed_statuses = {"ready", "archived"} if allow_archived else {"ready"}
+    ready_statuses = {"pending_train", "training", "published"}
+    allowed_statuses = ready_statuses | {"archived"} if allow_archived else ready_statuses
     if dataset.status not in allowed_statuses:
         raise HTTPException(status_code=422, detail="只有已冻结的数据集版本可以用于训练")
     return dataset

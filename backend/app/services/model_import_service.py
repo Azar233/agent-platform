@@ -170,7 +170,7 @@ class ModelImportService:
                 version=version,
                 name=display_name,
                 description=description or "由可用 YOLO 模型导入的类别目录版本。",
-                status="ready",
+                status="published",
                 is_current=False,
                 storage_path=str(target),
                 data_yaml_path="data.yaml",

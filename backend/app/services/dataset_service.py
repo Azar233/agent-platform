@@ -20,11 +20,12 @@ from app.entity.db_models import (
     DatasetVersion,
     DetectionScene,
     ModelVersion,
+    TrainingTask,
 )
 from app.entity.schemas import DatasetVersionCreate, DatasetVersionUpdate
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-DATASET_STATUSES = {"draft", "ready", "archived"}
+DATASET_STATUSES = {"draft", "pending_train", "training", "published", "archived"}
 
 
 class DatasetNotFoundError(ValueError):
@@ -111,6 +112,30 @@ class DatasetService:
         else:
             training_status = "untrained"
         latest_task = tasks[0] if tasks else None
+
+        session = Session.object_session(dataset)
+        default_model = None
+        if session is not None:
+            default_model = (
+                session.query(ModelVersion)
+                .filter(
+                    ModelVersion.scene_id == dataset.scene_id,
+                    ModelVersion.status == "active",
+                    ModelVersion.is_default.is_(True),
+                )
+                .first()
+            )
+        active_model_count = sum(
+            1 for model in model_versions if model.status == "active"
+        )
+        running_training_count = sum(
+            1 for task in tasks if task.status == "running"
+        )
+        is_in_use = (
+            default_model is not None
+            and default_model.dataset_version_id == dataset.id
+        )
+
         result = {
             "id": dataset.id,
             "scene_id": dataset.scene_id,
@@ -122,6 +147,7 @@ class DatasetService:
             "description": dataset.description,
             "status": dataset.status,
             "is_current": bool(dataset.is_current),
+            "is_in_use": is_in_use,
             "storage_path": dataset.storage_path,
             "data_yaml_path": dataset.data_yaml_path,
             "manifest_path": dataset.manifest_path,
@@ -157,6 +183,8 @@ class DatasetService:
             "latest_training_task_uuid": getattr(latest_task, "task_uuid", None),
             "latest_training_status": getattr(latest_task, "status", None),
             "model_version_count": len(model_versions),
+            "active_model_count": active_model_count,
+            "running_training_count": running_training_count,
             "classes": [],
         }
         if include_classes:
@@ -411,7 +439,7 @@ class DatasetService:
             raise DatasetLifecycleError("数据集校验未通过：" + "；".join(report["errors"]))
 
         dataset = cls.get(db, dataset_id)
-        dataset.status = "ready"
+        dataset.status = "pending_train"
         dataset.frozen_at = datetime.now()
         db.commit()
         db.refresh(dataset)
@@ -420,7 +448,7 @@ class DatasetService:
     @classmethod
     def set_current(cls, db: Session, *, dataset_id: int) -> DatasetVersion:
         dataset = cls.get(db, dataset_id)
-        if dataset.status != "ready":
+        if dataset.status not in {"pending_train", "training", "published"}:
             raise DatasetLifecycleError("只有已冻结的数据集可以设为当前版本")
         db.query(DatasetVersion).filter(
             DatasetVersion.scene_id == dataset.scene_id,
@@ -432,81 +460,103 @@ class DatasetService:
         return dataset
 
     @classmethod
+    def _pick_replacement_default_model(
+        cls,
+        db: Session,
+        scene_id: int,
+        exclude_model_ids: list[int] | None = None,
+    ) -> ModelVersion | None:
+        query = db.query(ModelVersion).filter(
+            ModelVersion.scene_id == scene_id,
+            ModelVersion.status == "active",
+        )
+        if exclude_model_ids:
+            query = query.filter(ModelVersion.id.notin_(exclude_model_ids))
+        candidates = query.order_by(
+            ModelVersion.is_default.desc(),
+            ModelVersion.created_at.desc(),
+        ).all()
+        return next(
+            (model for model in candidates if Path(model.model_path).expanduser().is_file()),
+            None,
+        )
+
+    @classmethod
+    def _pick_replacement_current_dataset(
+        cls,
+        db: Session,
+        scene_id: int,
+        exclude_dataset_id: int | None = None,
+        preferred_dataset_id: int | None = None,
+    ) -> DatasetVersion | None:
+        ready_statuses = {"pending_train", "training", "published"}
+        if preferred_dataset_id is not None:
+            preferred = db.query(DatasetVersion).filter(
+                DatasetVersion.id == preferred_dataset_id,
+                DatasetVersion.scene_id == scene_id,
+                DatasetVersion.status.in_(ready_statuses),
+            ).first()
+            if preferred is not None:
+                return preferred
+        query = db.query(DatasetVersion).filter(
+            DatasetVersion.scene_id == scene_id,
+            DatasetVersion.status.in_(ready_statuses),
+        )
+        if exclude_dataset_id is not None:
+            query = query.filter(DatasetVersion.id != exclude_dataset_id)
+        return query.order_by(
+            DatasetVersion.frozen_at.desc(),
+            DatasetVersion.created_at.desc(),
+        ).first()
+
+    @classmethod
     def archive(cls, db: Session, *, dataset_id: int) -> DatasetVersion:
         dataset = cls.get(db, dataset_id)
-        catalog_only = bool((dataset.extra_metadata or {}).get("catalog_only"))
-        if dataset.is_current and not catalog_only:
-            raise DatasetLifecycleError("当前数据集不能归档，请先切换当前版本")
-        if dataset.status != "ready":
+        if dataset.status not in {"pending_train", "training", "published"}:
             raise DatasetLifecycleError("只有已冻结的数据集可以归档")
 
-        if catalog_only:
-            # A model-catalog dataset and its imported best.pt represent one
-            # deployable unit. Archiving only the dataset would leave detection
-            # pointing at a version that the registry presents as unavailable.
-            from app.services.model_version_service import model_version_service
+        from app.services.model_version_service import model_version_service
 
-            model_version_service.ensure_builtin(db, scene_id=dataset.scene_id)
-            linked_models = list(dataset.model_versions)
-            linked_ids = [model.id for model in linked_models]
-            archived_default = any(
-                model.status == "active" and model.is_default for model in linked_models
+        model_version_service.ensure_builtin(db, scene_id=dataset.scene_id)
+
+        linked_models = [
+            model for model in (dataset.model_versions or []) if model.status == "active"
+        ]
+        linked_ids = [model.id for model in linked_models]
+        archived_default = any(model.is_default for model in linked_models)
+        for model in linked_models:
+            model.status = "archived"
+            model.is_default = False
+
+        replacement_model = None
+        if archived_default:
+            replacement_model = cls._pick_replacement_default_model(
+                db,
+                scene_id=dataset.scene_id,
+                exclude_model_ids=linked_ids,
             )
-            for model in linked_models:
-                if model.status == "active":
-                    model.status = "archived"
-                model.is_default = False
+            if replacement_model is not None:
+                replacement_model.is_default = True
 
-            replacement_model = None
-            if archived_default:
-                replacement_query = db.query(ModelVersion).filter(
-                    ModelVersion.scene_id == dataset.scene_id,
-                    ModelVersion.status == "active",
-                )
-                if linked_ids:
-                    replacement_query = replacement_query.filter(
-                        ModelVersion.id.notin_(linked_ids)
-                    )
-                candidates = replacement_query.order_by(
-                    ModelVersion.is_default.desc(),
-                    ModelVersion.created_at.desc(),
-                ).all()
-                replacement_model = next(
-                    (
-                        model
-                        for model in candidates
-                        if Path(model.model_path).expanduser().is_file()
-                    ),
-                    None,
-                )
-                if replacement_model is not None:
-                    replacement_model.is_default = True
+        preferred_dataset_id = None
+        if (
+            replacement_model is not None
+            and replacement_model.dataset_version_id is not None
+            and replacement_model.dataset_version_id != dataset.id
+        ):
+            preferred_dataset_id = replacement_model.dataset_version_id
 
-            replacement_dataset = None
-            if (
-                replacement_model is not None
-                and replacement_model.dataset_version_id is not None
-                and replacement_model.dataset_version_id != dataset.id
-            ):
-                candidate_dataset = replacement_model.dataset_version
-                if candidate_dataset is not None and candidate_dataset.status == "ready":
-                    replacement_dataset = candidate_dataset
-            if replacement_dataset is None:
-                replacement_dataset = (
-                    db.query(DatasetVersion)
-                    .filter(
-                        DatasetVersion.scene_id == dataset.scene_id,
-                        DatasetVersion.id != dataset.id,
-                        DatasetVersion.status == "ready",
-                    )
-                    .order_by(DatasetVersion.frozen_at.desc(), DatasetVersion.created_at.desc())
-                    .first()
-                )
-            db.query(DatasetVersion).filter(
-                DatasetVersion.scene_id == dataset.scene_id,
-            ).update({"is_current": False}, synchronize_session=False)
-            if replacement_dataset is not None:
-                replacement_dataset.is_current = True
+        replacement_dataset = cls._pick_replacement_current_dataset(
+            db,
+            scene_id=dataset.scene_id,
+            exclude_dataset_id=dataset.id,
+            preferred_dataset_id=preferred_dataset_id,
+        )
+        db.query(DatasetVersion).filter(
+            DatasetVersion.scene_id == dataset.scene_id,
+        ).update({"is_current": False}, synchronize_session=False)
+        if replacement_dataset is not None:
+            replacement_dataset.is_current = True
 
         dataset.status = "archived"
         dataset.is_current = False
@@ -514,6 +564,60 @@ class DatasetService:
         db.commit()
         db.refresh(dataset)
         return dataset
+
+    @classmethod
+    def sync_dataset_status(cls, db: Session, dataset_id: int | None) -> None:
+        if dataset_id is None:
+            return
+        dataset = db.query(DatasetVersion).filter(DatasetVersion.id == dataset_id).first()
+        if dataset is None:
+            return
+        if dataset.status in {"draft", "archived"}:
+            return
+        has_running_training = (
+            db.query(TrainingTask)
+            .filter(
+                TrainingTask.dataset_version_id == dataset_id,
+                TrainingTask.status == "running",
+            )
+            .first()
+            is not None
+        )
+        if has_running_training:
+            dataset.status = "training"
+        else:
+            has_active_model = (
+                db.query(ModelVersion)
+                .filter(
+                    ModelVersion.dataset_version_id == dataset_id,
+                    ModelVersion.status == "active",
+                )
+                .first()
+                is not None
+            )
+            if has_active_model:
+                dataset.status = "published"
+            else:
+                dataset.status = "pending_train"
+        db.commit()
+        db.refresh(dataset)
+
+    @classmethod
+    def set_current_from_model(cls, db: Session, model_version: ModelVersion) -> None:
+        if model_version.dataset_version_id is None:
+            return
+        dataset = db.query(DatasetVersion).filter(
+            DatasetVersion.id == model_version.dataset_version_id,
+        ).first()
+        if dataset is None or dataset.status == "archived":
+            return
+        db.query(DatasetVersion).filter(
+            DatasetVersion.scene_id == model_version.scene_id,
+            DatasetVersion.id != dataset.id,
+        ).update({"is_current": False}, synchronize_session=False)
+        dataset.is_current = True
+        db.commit()
+        db.refresh(dataset)
 
     @classmethod
     def delete_draft(

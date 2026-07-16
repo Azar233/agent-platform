@@ -31,7 +31,7 @@
             <div class="dataset-option">
               <span>{{ datasetOptionLabel(dataset) }}</span>
               <el-tag v-if="dataset.is_current" size="small" type="success">当前</el-tag>
-              <el-tag v-else size="small" :type="dataset.status === 'ready' ? 'primary' : 'info'">
+              <el-tag v-else size="small" :type="datasetStatusType(dataset.status)">
                 {{ datasetStatusText(dataset.status) }}
               </el-tag>
             </div>
@@ -181,6 +181,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Edit, Search } from '@element-plus/icons-vue'
 import { getDatasetVersionsApi } from '@/api/datasets'
+import { getDetectionModelVersionsApi } from '@/api/training'
 import { getPricesApi, updatePriceApi } from '@/api/prices'
 
 const PAGE_SIZE = 10
@@ -233,7 +234,23 @@ function datasetOptionLabel(dataset) {
 }
 
 function datasetStatusText(status) {
-  return { draft: '草稿', ready: '已冻结', archived: '已归档' }[status] || status
+  return {
+    draft: '草稿',
+    pending_train: '待训练',
+    training: '训练中',
+    published: '已发布',
+    archived: '已归档',
+  }[status] || status
+}
+
+function datasetStatusType(status) {
+  return {
+    draft: 'warning',
+    pending_train: 'primary',
+    training: 'warning',
+    published: 'success',
+    archived: 'info',
+  }[status] || 'info'
 }
 
 function formatPrice(value) {
@@ -328,7 +345,31 @@ async function handleSubmit() {
   }
 }
 
-onMounted(fetchDatasetVersions)
+onMounted(async () => {
+  await fetchDatasetVersions()
+  if (!selectedDatasetId.value) {
+    await autoSelectDefaultModelDataset()
+  }
+})
+
+async function autoSelectDefaultModelDataset() {
+  try {
+    const response = await getDetectionModelVersionsApi()
+    const defaultModel = (response.items || []).find((item) => item.is_default)
+    if (defaultModel?.dataset_version_id) {
+      selectedDatasetId.value = defaultModel.dataset_version_id
+      await fetchPrices()
+      return
+    }
+  } catch {
+    // ignore and fall back to current dataset
+  }
+  const currentDataset = datasetVersions.value.find((item) => item.is_current)
+  if (currentDataset) {
+    selectedDatasetId.value = currentDataset.id
+    await fetchPrices()
+  }
+}
 </script>
 
 <style lang="scss" scoped>
