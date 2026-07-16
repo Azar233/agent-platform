@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.entity.db_models import DetectionScene, ModelVersion, TrainingMetric, TrainingTask
+from app.entity.db_models import DatasetVersion, DetectionScene, ModelVersion, TrainingMetric, TrainingTask
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 BUILTIN_VERSION = "正式版v1.0"
@@ -157,6 +157,74 @@ class ModelVersionService:
         model.is_default = True
         db.commit()
         db.refresh(model)
+        from app.services.dataset_service import DatasetService
+
+        DatasetService.set_current_from_model(db, model)
+        return model
+
+    @classmethod
+    def archive_model(cls, db: Session, *, model_version_id: int) -> ModelVersion:
+        model = db.query(ModelVersion).filter(ModelVersion.id == model_version_id).first()
+        if model is None or model.status != "active":
+            raise ValueError("模型版本不存在或已停用")
+        was_default = bool(model.is_default)
+        model.status = "archived"
+        model.is_default = False
+
+        if was_default:
+            replacement = (
+                db.query(ModelVersion)
+                .filter(
+                    ModelVersion.scene_id == model.scene_id,
+                    ModelVersion.status == "active",
+                    ModelVersion.id != model.id,
+                )
+                .order_by(ModelVersion.is_default.desc(), ModelVersion.created_at.desc())
+                .all()
+            )
+            replacement_model = next(
+                (candidate for candidate in replacement if Path(candidate.model_path).expanduser().is_file()),
+                None,
+            )
+            if replacement_model is not None:
+                replacement_model.is_default = True
+
+        db.commit()
+        db.refresh(model)
+
+        if model.dataset_version_id is not None:
+            from app.services.dataset_service import DatasetService
+
+            DatasetService.sync_dataset_status(db, model.dataset_version_id)
+            dataset = db.query(DatasetVersion).filter(
+                DatasetVersion.id == model.dataset_version_id,
+            ).first()
+            if (
+                dataset is not None
+                and dataset.is_current
+                and dataset.status == "pending_train"
+            ):
+                active_count = (
+                    db.query(ModelVersion)
+                    .filter(
+                        ModelVersion.dataset_version_id == dataset.id,
+                        ModelVersion.status == "active",
+                    )
+                    .count()
+                )
+                running_count = (
+                    db.query(TrainingTask)
+                    .filter(
+                        TrainingTask.dataset_version_id == dataset.id,
+                        TrainingTask.status == "running",
+                    )
+                    .count()
+                )
+                if active_count == 0 and running_count == 0:
+                    dataset.is_current = False
+                    db.commit()
+                    db.refresh(dataset)
+
         return model
 
     @classmethod
@@ -206,6 +274,16 @@ class ModelVersionService:
             existing.map50_95 = metric.map50_95
         db.commit()
         db.refresh(existing)
+
+        # 训练完成后数据集状态需要从 training/training 推进到 published，
+        # 因为 training_service 在登记模型之前就已经调过一次 sync_dataset_status。
+        from app.services.dataset_service import DatasetService
+
+        if existing.dataset_version_id is not None:
+            DatasetService.sync_dataset_status(db, existing.dataset_version_id)
+        if existing.is_default and existing.dataset_version_id is not None:
+            DatasetService.set_current_from_model(db, existing)
+
         return existing
 
 

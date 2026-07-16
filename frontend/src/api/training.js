@@ -18,6 +18,10 @@ export function setDefaultDetectionModelApi(modelVersionId) {
   return request.post(`/training/model-versions/${modelVersionId}/set-default`)
 }
 
+export function archiveDetectionModelApi(modelVersionId) {
+  return request.post(`/training/model-versions/${modelVersionId}/archive`)
+}
+
 export function importTrainingRunApi(data) {
   return request.post('/training/import-run', data, { timeout: 0 })
 }

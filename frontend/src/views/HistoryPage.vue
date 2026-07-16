@@ -254,4 +254,13 @@ onMounted(async () => {
   .filter-actions :deep(.el-button) { min-height: 44px; flex: 1; }
 }
 @media (max-width: 800px) { .history-page { padding: 12px; }.page-header { padding: 24px; align-items: flex-start; }.summary-grid { grid-template-columns: repeat(2, 1fr); }.pagination-row { padding: 14px; align-items: flex-start; flex-direction: column; }.detail-summary { grid-template-columns: repeat(2, 1fr); } }
+
+/* 弱化操作列 link 按钮的焦点光圈 */
+:deep(.el-table .el-button.is-link) {
+  &:focus,
+  &:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+}
 </style>

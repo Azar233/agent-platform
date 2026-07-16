@@ -100,7 +100,7 @@ def test_dataset_draft_validate_freeze_and_current(client, db_session):
         json={"check_filesystem": False},
     )
     assert frozen.status_code == 200
-    assert frozen.json()["status"] == "ready"
+    assert frozen.json()["status"] == "pending_train"
 
     update = client.put(
         f"/api/datasets/{dataset['id']}",
@@ -174,7 +174,10 @@ def test_current_switch_archive_and_draft_delete(client, db_session):
     first = client.get(f"/api/datasets/{ids[0]}", headers=headers).json()
     assert first["is_current"] is False
     assert client.post(f"/api/datasets/{ids[0]}/archive", headers=headers).status_code == 200
-    assert client.post(f"/api/datasets/{ids[1]}/archive", headers=headers).status_code == 400
+    archived_current = client.post(f"/api/datasets/{ids[1]}/archive", headers=headers)
+    assert archived_current.status_code == 200
+    assert archived_current.json()["status"] == "archived"
+    assert archived_current.json()["is_current"] is False
 
     draft = client.post(
         "/api/datasets",

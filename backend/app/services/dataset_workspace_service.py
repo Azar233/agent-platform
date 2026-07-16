@@ -418,7 +418,7 @@ class DatasetWorkspaceService:
     ) -> DatasetVersion:
         cls._report(progress_callback, 2, "正在检查父版本与目标目录")
         parent = dataset_service.get(db, parent_id)
-        if parent.status not in {"ready", "archived"}:
+        if parent.status not in {"pending_train", "training", "published", "archived"}:
             raise DatasetLifecycleError("只能从已冻结的数据集派生新版本")
         if db.query(DatasetVersion).filter_by(scene_id=parent.scene_id, version=version).first():
             raise DatasetConflictError("同一场景下的数据集版本号不能重复")

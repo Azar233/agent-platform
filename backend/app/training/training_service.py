@@ -763,6 +763,9 @@ class TrainingService:
             task.status = "running"
             task.started_at = datetime.now()
             db.commit()
+            from app.services.dataset_service import DatasetService
+
+            DatasetService.sync_dataset_status(db, task.dataset_version_id)
             _append_task_log(task_uuid, "status=running")
 
             live_started_at = time.perf_counter()
@@ -844,6 +847,23 @@ class TrainingService:
                 "verbose": True,
             }
             train_kwargs.update(_training_augment_kwargs(config.get("augment_config")))
+
+            # 如果用户选了 GPU 但当前环境没有 CUDA，自动降级到 CPU，避免 Ultralytics 直接报错。
+            import torch
+
+            requested_device = train_kwargs.get("device", "cpu")
+            if requested_device not in {"cpu", "mps"} and not torch.cuda.is_available():
+                logger.warning(
+                    "CUDA device '%s' requested but CUDA not available; falling back to CPU | task=%s",
+                    requested_device,
+                    task_uuid,
+                )
+                _append_task_log(
+                    task_uuid,
+                    f"请求设备 {requested_device} 但 CUDA 不可用，已自动降级为 cpu",
+                )
+                train_kwargs["device"] = "cpu"
+
             logger.info("YOLO training begins | task=%s data=%s", task_uuid, data_yaml)
             _append_task_log(task_uuid, f"YOLO training begins\ntrain_kwargs={train_kwargs}")
 
@@ -884,6 +904,9 @@ class TrainingService:
                 task.current_epoch = int(config.get("epochs", 50))
                 task.completed_at = datetime.now()
                 db.commit()
+                from app.services.dataset_service import DatasetService
+
+                DatasetService.sync_dataset_status(db, task.dataset_version_id)
 
             results_monitor_stop.set()
             if results_monitor is not None:
@@ -935,6 +958,9 @@ class TrainingService:
                 task.error_message = str(exc)[:2000]
                 task.completed_at = datetime.now()
                 db.commit()
+                from app.services.dataset_service import DatasetService
+
+                DatasetService.sync_dataset_status(db, task.dataset_version_id)
             _set_live_progress(
                 task_uuid,
                 {
@@ -1370,6 +1396,9 @@ class TrainingService:
             metric.task_id = task.id
             db.add(metric)
         db.commit()
+        from app.services.dataset_service import DatasetService
+
+        DatasetService.sync_dataset_status(db, task.dataset_version_id)
         db.refresh(task)
 
         latest_metric = max(metrics, key=lambda item: item.epoch)
@@ -1621,6 +1650,9 @@ class TrainingService:
         model_version.file_size = weights_path.stat().st_size
         model_version.is_default = set_default
         db.commit()
+        from app.services.dataset_service import DatasetService
+
+        DatasetService.sync_dataset_status(db, task.dataset_version_id)
         db.refresh(model_version)
         _append_task_log(
             task.task_uuid,
@@ -1779,6 +1811,9 @@ class TrainingService:
         task.status = "cancelled"
         task.completed_at = datetime.now()
         db.commit()
+        from app.services.dataset_service import DatasetService
+
+        DatasetService.sync_dataset_status(db, task.dataset_version_id)
         _append_task_log(task.task_uuid, "training task cancelled by user")
         return {"message": "training task cancelled", "task_id": task_id}
 

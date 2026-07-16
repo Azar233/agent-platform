@@ -336,8 +336,9 @@ class DatasetVersionResponse(ProjectBaseModel):
     version: str
     name: str
     description: Optional[str] = None
-    status: Literal["draft", "ready", "archived"]
+    status: Literal["draft", "pending_train", "training", "published", "archived"]
     is_current: bool
+    is_in_use: bool = False
     storage_path: str
     data_yaml_path: str
     manifest_path: Optional[str] = None
@@ -367,6 +368,8 @@ class DatasetVersionResponse(ProjectBaseModel):
     latest_training_task_uuid: Optional[str] = None
     latest_training_status: Optional[str] = None
     model_version_count: int
+    active_model_count: int = 0
+    running_training_count: int = 0
     classes: list[DatasetClassMappingResponse] = Field(default_factory=list)
 
 

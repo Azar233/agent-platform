@@ -58,9 +58,17 @@
             <span>模型版本</span>
             <strong>{{ selectedModelVersion.version }}</strong>
           </div>
-          <el-tag size="small" :type="selectedModelVersion.is_default ? 'success' : 'info'">
-            {{ selectedModelVersion.is_default ? '检测使用中' : '可切换' }}
-          </el-tag>
+          <div class="model-version-actions">
+            <el-tag size="small" :type="selectedModelVersion.is_default ? 'success' : 'info'">
+              {{ selectedModelVersion.is_default ? '检测使用中' : '可切换' }}
+            </el-tag>
+            <el-button
+              v-if="selectedModelVersion.status === 'active'"
+              size="small"
+              :icon="Delete"
+              @click="archiveModel(selectedModelVersion)"
+            >归档模型</el-button>
+          </div>
         </div>
         <div class="model-version-grid">
           <div><span>所属场景</span><strong>{{ selectedModelVersion.scene_name || `#${selectedModelVersion.scene_id}` }}</strong></div>
@@ -86,7 +94,7 @@
       <div class="panel-header">
         <div>
           <span>可训练数据集版本</span>
-          <small>仅展示已冻结版本；训练状态由关联任务实时汇总</small>
+          <small>仅展示待训练和已发布版本；训练状态由关联任务实时汇总</small>
         </div>
         <el-button text :icon="Refresh" :loading="loadingDatasets" @click="fetchTrainingDatasets">
           刷新数据集
@@ -96,7 +104,7 @@
         v-loading="loadingDatasets"
         :data="trainableDatasets"
         stripe
-        empty-text="暂无已冻结的数据集版本，请先到数据集版本页面登记并冻结"
+        empty-text="暂无可训练的数据集版本，请先到数据集版本页面登记并冻结一个数据集版本"
       >
         <el-table-column label="数据集版本" min-width="190">
           <template #default="{ row }">
@@ -323,7 +331,7 @@
           <el-select
             v-model="trainForm.dataset_version_id"
             filterable
-            placeholder="选择已冻结的数据集版本"
+            placeholder="选择可训练的数据集版本"
             style="width: 100%"
             @change="syncTrainDatasetScene"
           >
@@ -696,6 +704,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   DataAnalysis,
+  Delete,
   Document,
   Download,
   Monitor,
@@ -711,6 +720,7 @@ import { GridComponent, LegendComponent, TitleComponent, TooltipComponent } from
 import { LineChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 import {
+  archiveDetectionModelApi,
   downloadTrainingModelApi,
   downloadTrainingResultsApi,
   exportTrainingModelApi,
@@ -829,11 +839,11 @@ const trainForm = ref({
 
 const trainableDatasets = computed(() =>
   datasetList.value.filter((dataset) => (
-    dataset.status === 'ready' && !dataset.extra_metadata?.catalog_only
+    (dataset.status === 'pending_train' || dataset.status === 'published') && !dataset.extra_metadata?.catalog_only
   ))
 )
 const importableDatasets = computed(() =>
-  datasetList.value.filter((dataset) => ['ready', 'archived'].includes(dataset.status))
+  datasetList.value.filter((dataset) => ['pending_train', 'training', 'published', 'archived'].includes(dataset.status))
 )
 const selectedTrainDataset = computed(() =>
   datasetList.value.find((dataset) => dataset.id === trainForm.value.dataset_version_id)
@@ -1072,6 +1082,17 @@ async function switchDetectionModel() {
   } finally {
     switchingModelVersionId.value = null
   }
+}
+
+async function archiveModel(model) {
+  if (!model || model.status !== 'active') return
+  const message = model.is_default
+    ? `确定归档当前检测模型 ${model.version} 吗？系统会尝试切换到其他可用模型；若该数据集下无其他模型，对应数据集将回退为待训练。`
+    : `确定归档模型 ${model.version} 吗？仅归档该模型，不影响其他模型和数据集。`
+  await ElMessageBox.confirm(message, '归档模型', { type: 'warning' })
+  await archiveDetectionModelApi(model.id)
+  ElMessage.success('模型已归档')
+  await Promise.all([fetchModelVersions(), fetchTrainingDatasets()])
 }
 
 async function fetchTrainingDatasets() {
@@ -1605,6 +1626,15 @@ onBeforeUnmount(() => {
   }
 
   > .el-tag { flex: 0 0 auto; }
+}
+
+.model-version-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
 }
 
 .model-version-grid {
