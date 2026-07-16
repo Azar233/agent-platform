@@ -1,6 +1,9 @@
 """Day 10 dashboard, history, and account settings integration tests."""
 
+from io import BytesIO
 from datetime import datetime, timedelta
+
+from PIL import Image
 
 from app.entity.db_models import DetectionResult, DetectionScene, DetectionTask, User
 
@@ -149,6 +152,25 @@ def test_profile_and_password_settings(client):
     )
     assert changed.status_code == 200
     assert client.post("/api/auth/login", json={"username": "day10_user", "password": "654321"}).status_code == 200
+
+
+def test_avatar_upload_updates_current_user(client):
+    headers = auth_headers(client, "avatar_user")
+    buffer = BytesIO()
+    Image.new("RGB", (1, 1), color=(0, 113, 227)).save(buffer, format="PNG")
+    png_bytes = buffer.getvalue()
+
+    uploaded = client.post(
+        "/api/user/avatar",
+        headers=headers,
+        files={"file": ("avatar.png", png_bytes, "image/png")},
+    )
+
+    assert uploaded.status_code == 200
+    avatar_url = uploaded.json()["user"]["avatar"]
+    assert avatar_url.startswith("/media/avatars/user_")
+    assert client.get("/api/auth/me", headers=headers).json()["avatar"] == avatar_url
+    assert client.get(avatar_url).status_code == 200
 
 
 def test_user_directory_is_admin_only(client, db_session):
