@@ -1,14 +1,41 @@
 """Profile settings and administrator-only user/role queries."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from io import BytesIO
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
+from app.config.settings import settings
 from app.database.session import get_db
 from app.entity.schemas import ChangePassword, UserUpdate
 from app.services.user_service import user_service
 
 router = APIRouter(prefix="/api/user", tags=["用户管理"])
+AVATAR_EXTENSIONS = {
+    ".jpg": "JPEG",
+    ".jpeg": "JPEG",
+    ".png": "PNG",
+    ".webp": "WEBP",
+    ".bmp": "BMP",
+}
+
+
+def _avatar_dir() -> Path:
+    path = Path(settings.MEDIA_ROOT).resolve() / "avatars"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _remove_local_avatar(avatar_url: str | None) -> None:
+    if not avatar_url or not avatar_url.startswith("/media/avatars/"):
+        return
+    filename = Path(avatar_url).name
+    if filename:
+        (_avatar_dir() / filename).unlink(missing_ok=True)
 
 
 def require_admin(current_user=Depends(get_current_user)):
@@ -43,7 +70,52 @@ def update_profile(
     db: Session = Depends(get_db),
 ):
     changes = request.model_dump(exclude_unset=True)
-    return user_service.update_profile(db, current_user.id, **changes)
+    previous_avatar = current_user.avatar
+    result = user_service.update_profile(db, current_user.id, **changes)
+    if "avatar" in changes and result["user"].get("avatar") != previous_avatar:
+        _remove_local_avatar(previous_avatar)
+    return result
+
+
+@router.post("/avatar", summary="上传用户头像")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in AVATAR_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="仅支持 JPG、PNG、WEBP 或 BMP 头像")
+
+    limit = settings.USER_AVATAR_MAX_FILE_MB * 1024 * 1024
+    content = await file.read(limit + 1)
+    if len(content) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"头像文件不能超过 {settings.USER_AVATAR_MAX_FILE_MB} MB",
+        )
+
+    try:
+        with Image.open(BytesIO(content)) as image:
+            if image.format != AVATAR_EXTENSIONS[suffix]:
+                raise HTTPException(status_code=415, detail="头像文件格式与扩展名不一致")
+            image.verify()
+    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
+        raise HTTPException(status_code=415, detail="头像文件不是有效图片") from exc
+
+    filename = f"user_{current_user.id}_{uuid4().hex}{suffix}"
+    target = _avatar_dir() / filename
+    target.write_bytes(content)
+    avatar_url = f"/media/avatars/{filename}"
+
+    try:
+        previous_avatar = current_user.avatar
+        result = user_service.update_profile(db, current_user.id, avatar=avatar_url)
+        _remove_local_avatar(previous_avatar)
+        return result
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
 
 
 @router.put("/password", summary="修改密码")

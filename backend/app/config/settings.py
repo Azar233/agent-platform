@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     VIDEO_MAX_KEY_FRAMES: int = 50
     VIDEO_TASK_TTL_SECONDS: int = 3600
     VIDEO_RESULT_DIR: str = "runs/detect/video-results"
+    MEDIA_ROOT: str = ".runtime/media"
+    USER_AVATAR_MAX_FILE_MB: int = 2
 
     # ── IP Webcam 实时检测配置 ─────────────────────────
     # 前端可以覆盖该默认地址；后端仍会校验为安全的局域网 HTTP 地址。

@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config.settings import settings
 from app.api.auth import router as auth_router
@@ -72,6 +74,10 @@ app.add_middleware(
 
 # 2. 请求日志中间件(在 CORS 之后注册)
 app.add_middleware(RequestLogMiddleware)
+
+media_root = Path(settings.MEDIA_ROOT).resolve()
+media_root.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=str(media_root)), name="media")
 
 # ── 注册路由 ─────────────────────────────────────────
 app.include_router(auth_router)
