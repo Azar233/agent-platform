@@ -147,6 +147,7 @@ async def get_session(
                 "files": metadata.get("attachments", []),
                 "tool": metadata.get("tool"),
                 "handoff": metadata.get("handoff"),
+                "input_form": metadata.get("input_form"),
                 "confirmation": metadata.get("confirmation"),
                 "result": _parse_json(message.tool_result),
                 "created_at": message.created_at,
@@ -316,6 +317,7 @@ async def chat_stream(
         result = None
         tool_name = None
         handoff = None
+        input_form = None
         confirmation = None
         error_text = None
         yield f"data: {json.dumps({'type': 'session', 'session_uuid': session_uuid})}\n\n"
@@ -339,6 +341,8 @@ async def chat_stream(
                         "status": event.get("status"),
                         "context": event.get("context") or {},
                     }
+                elif event.get("type") == "input_form":
+                    input_form = event.get("form") or None
                 elif event.get("type") == "confirmation_required":
                     raw_operation = event.get("operation") or {}
                     confirmation = {
@@ -365,6 +369,7 @@ async def chat_stream(
                             {
                                 **({"tool": tool_name} if tool_name else {}),
                                 **({"handoff": handoff} if handoff else {}),
+                                **({"input_form": input_form} if input_form else {}),
                                 **({"confirmation": confirmation} if confirmation else {}),
                             }
                             or None

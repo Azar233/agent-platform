@@ -1,4 +1,12 @@
+import pytest
+
 from app.agent.routing import AgentRouter, RouteDecision
+
+
+@pytest.fixture(autouse=True)
+def disable_external_embedding(monkeypatch):
+    """Route unit tests must not call DashScope or require an API key."""
+    monkeypatch.setattr(AgentRouter, "_embedding_route", lambda self, message: None)
 
 
 def test_keyword_routes_cover_management_domains():
@@ -60,6 +68,88 @@ def test_dataset_field_reply_keeps_conversation_context():
 
     assert decision.agent == "dataset"
     assert decision.method == "conversation_context"
+
+
+def test_explicit_price_change_overrides_dataset_conversation():
+    decision = AgentRouter().route(
+        "把数据集 1 中商品 ID 1 的价格改为 4 元",
+        preferred_agent="dataset",
+    )
+
+    assert decision.agent == "catalog"
+    assert decision.method == "explicit_intent"
+
+
+def test_explicit_training_start_overrides_dataset_conversation():
+    decision = AgentRouter().route(
+        "使用数据集 2 启动训练",
+        preferred_agent="dataset",
+    )
+
+    assert decision.agent == "training"
+    assert decision.method == "explicit_intent"
+
+
+def test_dataset_sample_edit_overrides_training_keywords_in_dataset_context():
+    decision = AgentRouter().route(
+        "我现在要向这个新的模型中添加一个新的商品的训练集",
+        preferred_agent="dataset",
+    )
+
+    assert decision.agent == "dataset"
+    assert decision.method == "explicit_intent"
+
+
+def test_dataset_sample_edit_with_version_context_routes_to_dataset():
+    decision = AgentRouter().route("向新派生版本添加一个新商品的训练集")
+
+    assert decision.agent == "dataset"
+    assert decision.method == "explicit_intent"
+
+
+def test_named_dataset_product_addition_overrides_stale_training_context():
+    decision = AgentRouter().route(
+        "我现在要向 mutation-smoke-v2 中添加新的商品",
+        preferred_agent="training",
+        active_workflow_agent="training",
+    )
+
+    assert decision.agent == "dataset"
+    assert decision.method == "explicit_intent"
+
+
+def test_dataset_sample_attachment_overrides_stale_training_context():
+    decision = AgentRouter().route(
+        "添加新的商品训练图",
+        has_attachments=True,
+        preferred_agent="training",
+    )
+
+    assert decision.agent == "dataset"
+    assert decision.method == "explicit_intent"
+
+
+def test_embedding_is_consulted_but_cannot_override_dataset_edit(monkeypatch):
+    observed = []
+    semantic = RouteDecision("training", "embedding", 0.91, "test semantic candidate")
+    monkeypatch.setattr(
+        AgentRouter,
+        "_embedding_route",
+        lambda self, message: observed.append(message) or semantic,
+    )
+
+    decision = AgentRouter().route("向 mutation-smoke-v2 中添加新的商品")
+
+    assert observed == ["向 mutation-smoke-v2 中添加新的商品"]
+    assert decision.agent == "dataset"
+    assert decision.method == "explicit_intent"
+
+
+def test_embedding_is_primary_when_no_strong_intent(monkeypatch):
+    semantic = RouteDecision("knowledge", "embedding", 0.81, "test semantic candidate")
+    monkeypatch.setattr(AgentRouter, "_embedding_route", lambda self, message: semantic)
+
+    assert AgentRouter().route("帮我梳理一下最近的经营资料") == semantic
 
 
 def test_ambiguous_message_uses_embedding_route(monkeypatch):

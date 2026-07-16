@@ -112,6 +112,17 @@ class ScopedToolAgent:
                             "status": handoff.get("status"),
                             "context": handoff.get("context") or {},
                         }
+                if tool_name == "request_dataset_sample_form":
+                    try:
+                        form = json.loads(content)
+                    except (TypeError, json.JSONDecodeError):
+                        form = None
+                    if isinstance(form, dict) and form.get("form_type"):
+                        yield {
+                            "type": "input_form",
+                            "agent": self.name,
+                            "form": form,
+                        }
                 if tool_name.startswith("preview_"):
                     try:
                         operation = json.loads(content)

@@ -134,6 +134,59 @@ class AgentRouter:
             )
         )
 
+    @staticmethod
+    def _explicit_management_intent(message: str) -> RouteDecision | None:
+        lowered = message.lower()
+        price_terms = ("价格", "价目", "单价", "定价")
+        price_actions = ("改", "修改", "更新", "设置", "清除", "取消", "查询", "查看", "多少", "未定价")
+        if any(term in lowered for term in price_terms) and any(
+            action in lowered for action in price_actions
+        ):
+            return RouteDecision("catalog", "explicit_intent", 0.99, "明确的价目表操作")
+
+        if "训练" in lowered and any(
+            action in lowered for action in ("启动", "开始", "停止", "取消", "进度", "指标", "日志")
+        ):
+            return RouteDecision("training", "explicit_intent", 0.99, "明确的训练操作")
+        if any(term in lowered for term in ("默认模型", "切换模型", "发布模型")):
+            return RouteDecision("training", "explicit_intent", 0.99, "明确的模型管理操作")
+        return None
+
+    @staticmethod
+    def _strong_intent_decision(
+        decision: RouteDecision, semantic: RouteDecision | None
+    ) -> RouteDecision:
+        """Keep deterministic safety/workflow decisions ahead of semantic routing."""
+        if semantic and semantic.agent != decision.agent:
+            logger.info(
+                "强意图覆盖向量路由: final=%s(%s), semantic=%s(%.3f)",
+                decision.agent,
+                decision.method,
+                semantic.agent,
+                semantic.confidence,
+            )
+        return decision
+
+    @staticmethod
+    def _dataset_edit_intent(
+        message: str, preferred_agent: str | None
+    ) -> RouteDecision | None:
+        """Keep sample authoring in Dataset even when users call it a training set."""
+        lowered = message.lower()
+        add_actions = ("添加", "新增", "增加", "加入", "录入", "导入")
+        sample_targets = (
+            "商品", "样品", "样本", "训练图", "训练集", "训练样品", "标注",
+        )
+        is_sample_edit = any(action in lowered for action in add_actions) and any(
+            target in lowered for target in sample_targets
+        )
+        if not is_sample_edit:
+            return None
+        # 商品、样品和标注只能在数据集版本中编辑。这里不依赖“版本”字样，
+        # 因为用户常直接引用版本名（例如 mutation-smoke-v2），而错误的上一轮
+        # Agent 也不能把该领域意图污染成 Training 会话。
+        return RouteDecision("dataset", "explicit_intent", 0.99, "明确的数据集样品编辑操作")
+
     def route(
         self,
         message: str,
@@ -145,30 +198,70 @@ class AgentRouter:
         preferred = preferred_agent if preferred_agent in AGENT_NAMES else None
         active = active_workflow_agent if active_workflow_agent in AGENT_NAMES else None
         explicit_detection = self._explicit_detection_intent(message)
+        # Every message obtains a semantic second opinion. Strong, auditable business
+        # intents below still win; otherwise this is the primary routing signal.
+        semantic = self._embedding_route(message)
+        explicit_management = self._explicit_management_intent(message)
+        dataset_edit = self._dataset_edit_intent(message, preferred)
 
         if has_attachments:
             if explicit_detection:
-                return RouteDecision("detection", "attachment_intent", 1.0, "用户明确要求检测附件")
+                return self._strong_intent_decision(
+                    RouteDecision("detection", "attachment_intent", 1.0, "用户明确要求检测附件"),
+                    semantic,
+                )
+            if explicit_management:
+                return self._strong_intent_decision(explicit_management, semantic)
+            if dataset_edit:
+                return self._strong_intent_decision(dataset_edit, semantic)
             if active:
-                return RouteDecision(active, "active_workflow", 0.99, "附件延续未完成的领域工作流")
+                return self._strong_intent_decision(
+                    RouteDecision(active, "active_workflow", 0.99, "附件延续未完成的领域工作流"),
+                    semantic,
+                )
             if preferred:
-                return RouteDecision(preferred, "conversation_context", 0.96, "附件延续上一领域对话")
-            return RouteDecision("detection", "attachment", 1.0, "本轮包含检测附件")
+                return self._strong_intent_decision(
+                    RouteDecision(preferred, "conversation_context", 0.96, "附件延续上一领域对话"),
+                    semantic,
+                )
+            return self._strong_intent_decision(
+                RouteDecision("detection", "attachment", 1.0, "本轮包含检测附件"),
+                semantic,
+            )
+
+        if explicit_detection:
+            return self._strong_intent_decision(
+                RouteDecision("detection", "explicit_intent", 0.99, "明确的商品检测操作"),
+                semantic,
+            )
 
         if preferred == "dataset" and any(
             cue in message.lower()
             for cue in ("商品名", "商品名称", "类别名", "类别英文名", "class_name", "train_new", "train_existing")
         ):
-            return RouteDecision("dataset", "conversation_context", 0.96, "继续补充数据集样品字段")
+            return self._strong_intent_decision(
+                RouteDecision("dataset", "conversation_context", 0.96, "继续补充数据集样品字段"),
+                semantic,
+            )
+
+        if explicit_management:
+            return self._strong_intent_decision(explicit_management, semantic)
+
+        if dataset_edit:
+            return self._strong_intent_decision(dataset_edit, semantic)
+
+        if active:
+            return self._strong_intent_decision(
+                RouteDecision(active, "active_workflow", 0.94, "继续未完成的领域工作流"),
+                semantic,
+            )
+
+        if semantic:
+            return semantic
 
         keyword = self._keyword_route(message)
         if keyword:
             return keyword
-        if active:
-            return RouteDecision(active, "active_workflow", 0.94, "继续未完成的领域工作流")
         if preferred:
             return RouteDecision(preferred, "conversation_context", 0.86, "延续上一领域对话")
-        embedded = self._embedding_route(message)
-        if embedded:
-            return embedded
         return RouteDecision("knowledge", "fallback", 0.35, "未识别明确业务域，交由知识 Agent 澄清")

@@ -4,6 +4,10 @@ export function getAgentOperationApi(operationUuid) {
   return request.get(`/agent/operations/${operationUuid}`)
 }
 
+export function listAgentOperationsApi(params = {}) {
+  return request.get('/agent/operations', { params })
+}
+
 export function rotateAgentOperationTokenApi(operationUuid) {
   return request.post(`/agent/operations/${operationUuid}/token`)
 }
