@@ -98,19 +98,19 @@
           <el-table-column prop="updated_at" label="更新时间" width="170">
             <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="190" fixed="right" align="center">
+          <el-table-column label="操作" width="120" fixed="right" align="center">
             <template #default="{ row }">
               <div class="table-actions">
-                <el-button class="row-action edit-action" size="small" :icon="Edit" @click="openEditDialog(row)">
-                  {{ row.has_price ? '编辑' : '配置价格' }}
-                </el-button>
                 <el-button
-                  class="row-action delete-action"
+                  class="row-action edit-action"
                   size="small"
-                  :icon="Delete"
-                  :disabled="!row.has_price"
-                  @click="handleDelete(row)"
-                >清除价格</el-button>
+                  :icon="Edit"
+                  :aria-label="row.has_price ? '编辑价格' : '配置价格'"
+                  :title="row.has_price ? '编辑价格' : '配置价格'"
+                  @click="openEditDialog(row)"
+                >
+                  <span class="row-action-label">{{ row.has_price ? '编辑' : '配置价格' }}</span>
+                </el-button>
               </div>
             </template>
           </el-table-column>
@@ -178,10 +178,10 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Edit, Search } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { Edit, Search } from '@element-plus/icons-vue'
 import { getDatasetVersionsApi } from '@/api/datasets'
-import { deletePriceApi, getPricesApi, updatePriceApi } from '@/api/prices'
+import { getPricesApi, updatePriceApi } from '@/api/prices'
 
 const PAGE_SIZE = 10
 const datasetLoading = ref(false)
@@ -328,22 +328,6 @@ async function handleSubmit() {
   }
 }
 
-async function handleDelete(row) {
-  if (!selectedDatasetId.value || !row.has_price) return
-  try {
-    await ElMessageBox.confirm(
-      `确定清除 product_id=${row.product_id} 的价格配置吗？商品和数据集标注不会被删除。`,
-      '清除价格确认',
-      { confirmButtonText: '清除价格', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  await deletePriceApi(selectedDatasetId.value, row.product_id)
-  ElMessage.success('价格配置已清除')
-  await fetchPrices()
-}
-
 onMounted(fetchDatasetVersions)
 </script>
 
@@ -391,12 +375,19 @@ onMounted(fetchDatasetVersions)
 }
 
 .scope-hint { color: var(--vp-muted); font-size: 13px; }
-.table-actions { display: flex; align-items: center; justify-content: center; gap: 8px; }
-.row-action { margin-left: 0; border-radius: 8px; font-weight: 500; }
+.table-actions { display: flex; align-items: center; justify-content: center; }
+.row-action {
+  min-width: 88px;
+  max-width: 100%;
+  margin-left: 0;
+  padding-inline: 12px;
+  border-radius: 8px;
+  font-weight: 500;
+
+  :deep(.el-icon) { flex: 0 0 auto; }
+}
 .edit-action { color: var(--vp-primary); border-color: var(--vp-primary); background: var(--vp-primary-soft); }
 .edit-action:hover, .edit-action:focus-visible { color: var(--vp-primary-hover); border-color: var(--vp-primary-hover); background: var(--vp-primary-soft); }
-.delete-action { color: var(--vp-danger); border-color: var(--vp-danger); background: color-mix(in srgb, var(--vp-danger) 10%, transparent); }
-.delete-action:hover, .delete-action:focus-visible { color: var(--vp-danger); border-color: var(--vp-danger); background: color-mix(in srgb, var(--vp-danger) 18%, transparent); }
 
 .pagination-row {
   min-height: 64px;
@@ -413,5 +404,14 @@ onMounted(fetchDatasetVersions)
   .scope-copy,
   .selected-dataset-summary,
   .pagination-row { align-items: flex-start; flex-direction: column; }
+
+  .row-action {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+  }
+
+  .row-action-label { display: none; }
 }
 </style>

@@ -58,7 +58,7 @@
             <span>模型版本</span>
             <strong>{{ selectedModelVersion.version }}</strong>
           </div>
-          <el-tag :type="selectedModelVersion.is_default ? 'success' : 'info'" effect="plain">
+          <el-tag size="small" :type="selectedModelVersion.is_default ? 'success' : 'info'">
             {{ selectedModelVersion.is_default ? '检测使用中' : '可切换' }}
           </el-tag>
         </div>
@@ -1589,20 +1589,22 @@ onBeforeUnmount(() => {
   gap: 14px;
   margin-bottom: 14px;
 
-  span,
-  strong {
+  > div > span,
+  > div > strong {
     display: block;
   }
 
-  span {
+  > div > span {
     color: $text-secondary;
     font-size: 12px;
   }
 
-  strong {
+  > div > strong {
     margin-top: 4px;
     font-size: 20px;
   }
+
+  > .el-tag { flex: 0 0 auto; }
 }
 
 .model-version-grid {
