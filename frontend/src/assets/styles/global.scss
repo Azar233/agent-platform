@@ -406,18 +406,6 @@ html.dark .price-management-page .table-actions .edit-action:focus-visible {
   background: #0a84ff;
   box-shadow: 0 4px 12px rgba(10, 132, 255, .24);
 }
-html.dark .price-management-page .table-actions .delete-action {
-  color: #ff6961;
-  border-color: rgba(255, 105, 97, .38);
-  background: rgba(255, 69, 58, .14);
-}
-html.dark .price-management-page .table-actions .delete-action:hover,
-html.dark .price-management-page .table-actions .delete-action:focus-visible {
-  color: #fff;
-  border-color: #ff453a;
-  background: #ff453a;
-  box-shadow: 0 4px 12px rgba(255, 69, 58, .24);
-}
 html.dark .el-input__wrapper,
 html.dark .el-textarea__inner,
 html.dark .el-select__wrapper,
