@@ -130,7 +130,9 @@ class AgentRouter:
             phrase in lowered
             for phrase in (
                 "检测这张", "检测附件", "识别这张", "识别附件", "商品检测",
-                "开始检测", "开始识别", "用模型检测", "推理这张",
+                "检测图片", "识别图片", "检测图像", "识别图像", "检测照片", "识别照片",
+                "批量检测", "批量识别", "检测下面", "识别下面", "开始检测", "开始识别",
+                "用模型检测", "推理这张",
             )
         )
 
@@ -189,6 +191,34 @@ class AgentRouter:
         return RouteDecision("dataset", "explicit_intent", 0.99, "明确的数据集样品编辑操作")
 
     @staticmethod
+    def _dataset_lifecycle_intent(message: str) -> RouteDecision | None:
+        """Route dataset creation/version lifecycle operations deterministically."""
+        lowered = message.lower()
+        dataset_terms = ("数据集", "dataset", "数据版本", "数据草稿", "基线版本")
+        lifecycle_actions = (
+            "创建",
+            "新建",
+            "建立",
+            "导入",
+            "派生",
+            "冻结",
+            "归档",
+            "删除",
+            "校验",
+            "查看",
+            "查询",
+            "列出",
+            "详情",
+        )
+        if any(term in lowered for term in dataset_terms) and any(
+            action in lowered for action in lifecycle_actions
+        ):
+            return RouteDecision(
+                "dataset", "explicit_intent", 0.99, "明确的数据集生命周期操作"
+            )
+        return None
+
+    @staticmethod
     def _general_knowledge_intent(message: str) -> RouteDecision | None:
         """Keep conceptual questions out of a stale domain-Agent conversation."""
         normalized = message.strip().lower()
@@ -209,6 +239,26 @@ class AgentRouter:
         if any(cue in normalized for cue in identity_cues):
             return RouteDecision(
                 "knowledge", "general_knowledge", 0.98, "通用的平台或 Agent 能力说明"
+            )
+
+        agent_scope_terms = (
+            "detection agent",
+            "dataset agent",
+            "training agent",
+            "catalog agent",
+            "knowledge agent",
+            "检测智能体",
+            "数据集智能体",
+            "训练智能体",
+            "价目表智能体",
+            "知识智能体",
+        )
+        scope_cues = ("职责", "负责", "功能", "做什么", "干什么", "能做什么", "工作")
+        if any(term in normalized for term in agent_scope_terms) and any(
+            cue in normalized for cue in scope_cues
+        ):
+            return RouteDecision(
+                "knowledge", "general_knowledge", 0.98, "领域 Agent 职责说明"
             )
 
         explanation_cues = (
@@ -256,8 +306,20 @@ class AgentRouter:
         # Every message obtains a semantic second opinion. Strong, auditable business
         # intents below still win; otherwise this is the primary routing signal.
         semantic = self._embedding_route(message)
+
+        if str(settings.AGENT_ROUTING_MODE).strip().lower() == "embedding_only":
+            if semantic:
+                return semantic
+            return RouteDecision(
+                "knowledge",
+                "embedding_unavailable",
+                0.0,
+                "纯向量路由测试中 Embedding 不可用或相似度不足，安全降级到 Knowledge Agent",
+            )
+
         explicit_management = self._explicit_management_intent(message)
         dataset_edit = self._dataset_edit_intent(message, preferred)
+        dataset_lifecycle = self._dataset_lifecycle_intent(message)
         general_knowledge = self._general_knowledge_intent(message)
 
         if has_attachments:
@@ -270,12 +332,17 @@ class AgentRouter:
                 return self._strong_intent_decision(explicit_management, semantic)
             if dataset_edit:
                 return self._strong_intent_decision(dataset_edit, semantic)
+            if dataset_lifecycle:
+                return self._strong_intent_decision(dataset_lifecycle, semantic)
             if active:
                 return self._strong_intent_decision(
                     RouteDecision(active, "active_workflow", 0.99, "附件延续未完成的领域工作流"),
                     semantic,
                 )
-            if preferred:
+            # Dataset may legitimately continue an add-samples handoff. Other
+            # management Agents cannot consume chat attachment paths, so a stale
+            # conversation context must not capture a new image-detection turn.
+            if preferred == "dataset":
                 return self._strong_intent_decision(
                     RouteDecision(preferred, "conversation_context", 0.96, "附件延续上一领域对话"),
                     semantic,
@@ -305,6 +372,9 @@ class AgentRouter:
 
         if dataset_edit:
             return self._strong_intent_decision(dataset_edit, semantic)
+
+        if dataset_lifecycle:
+            return self._strong_intent_decision(dataset_lifecycle, semantic)
 
         if general_knowledge:
             return self._strong_intent_decision(general_knowledge, semantic)
