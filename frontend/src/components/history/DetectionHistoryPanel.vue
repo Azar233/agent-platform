@@ -25,7 +25,7 @@
       <el-table-column prop="total_objects" label="商品实例" width="96" align="right" />
       <el-table-column label="平均耗时" width="108" align="right"><template #default="{ row }">{{ Number(row.avg_inference_time || 0).toFixed(1) }} ms</template></el-table-column>
       <el-table-column label="创建时间" min-width="164"><template #default="{ row }">{{ formatDate(row.created_at) }}</template></el-table-column>
-      <el-table-column label="操作" width="154" fixed="right"><template #default="{ row }"><div class="row-actions"><el-button size="small" :icon="View" @click="openDetail(row)">详情</el-button><el-button size="small" type="danger" plain :icon="Delete" @click="removeTask(row)">删除</el-button></div></template></el-table-column>
+      <el-table-column label="操作" width="190" fixed="right" align="center"><template #default="{ row }"><div class="row-actions vp-table-action-safe-area"><el-button class="vp-table-action-button" size="small" :icon="View" @click="openDetail(row)">详情</el-button><el-button class="vp-table-action-button is-danger-action" size="small" type="danger" plain :icon="Delete" @click="removeTask(row)">删除</el-button></div></template></el-table-column>
     </el-table>
 
     <footer class="pagination-row"><span>共 {{ pagination.total }} 条记录</span><el-pagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :page-sizes="[10, 20, 50]" :total="pagination.total" layout="sizes, prev, pager, next" @current-change="loadTasks" @size-change="handleSizeChange" /></footer>
@@ -95,7 +95,7 @@ onMounted(async () => { try { scenes.value = (await getScenes()).scenes || [] } 
 <style lang="scss" scoped>
 .history-panel { overflow: hidden; border: 1px solid $border-color; border-radius: 16px; background: $surface-color; }
 .filters { padding: 16px; display: grid; grid-template-columns: minmax(190px,1.4fr) repeat(3,minmax(130px,.8fr)) minmax(270px,1.3fr) auto; gap: 10px; border-bottom: 1px solid $border-color; }.filters > * { min-width: 0; width: 100%; }.filter-actions { display: flex; width: auto; }
-.record-id { color: $primary-color; }.row-actions { display: flex; gap: 6px; }.row-actions :deep(.el-button) { margin: 0; }
+.record-id { color: $primary-color; }.row-actions { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; }
 .pagination-row { min-height: 64px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid $border-color; }.pagination-row span { color: $text-secondary; font-size: 12px; }
 .detail-content { min-height: 220px; display: flex; flex-direction: column; gap: 22px; }.detail-summary { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; }.detail-summary div { padding: 14px; display: flex; flex-direction: column; gap: 5px; border-radius: 12px; background: $surface-muted; }.detail-summary span { color: $text-secondary; font-size: 11px; }.detail-summary strong { font-size: 17px; }.detail-section h3 { margin: 0 0 12px; font-size: 15px; }.tag-list { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 1180px) { .filters { grid-template-columns: repeat(3,1fr); }.filter-actions { width: 100%; } }

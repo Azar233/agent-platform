@@ -21,7 +21,17 @@
     @keydown="moveWithKeyboard"
   >
     <Transition name="pet-bubble">
-      <div v-if="petStore.message" class="pet-message">
+      <div
+        v-if="petStore.message"
+        ref="petMessage"
+        class="pet-message"
+        :class="{
+          'is-positioned': hasBubblePosition,
+          'opens-right': bubblePlacement.horizontal === 'right',
+          'opens-below': bubblePlacement.vertical === 'below',
+        }"
+        :style="bubblePositionStyle"
+      >
         <span class="pet-status-dot" aria-hidden="true" />
         <div class="pet-message-content">
           <div class="pet-message-heading">
@@ -62,15 +72,26 @@ const STORAGE_KEY = 'vp_vision_pet_position'
 const EDGE_GAP = 16
 const DEFAULT_WIDTH = 134
 const DEFAULT_HEIGHT = 181
+const DEFAULT_STAGE_WIDTH = 112
+const DEFAULT_STAGE_HEIGHT = 160
+const MOBILE_WIDTH = 109
+const MOBILE_HEIGHT = 146
+const MOBILE_STAGE_WIDTH = 90
+const MOBILE_STAGE_HEIGHT = 128
 const petStore = useVisionPetStore()
 const petRoot = ref(null)
+const petMessage = ref(null)
 const dragging = ref(false)
 const position = ref({ x: 0, y: 0 })
 const activeFrame = ref(0)
+const bubblePlacement = ref({ horizontal: 'left', vertical: 'above' })
+const bubblePosition = ref(null)
+const isMobileViewport = ref((globalThis.innerWidth || 0) <= 768)
 
 let dragOffset = { x: 0, y: 0 }
 let animationTimer
 let messageTimer
+let bubbleResizeObserver
 
 const sequences = {
   idle: {
@@ -91,9 +112,37 @@ const sequences = {
   },
 }
 
+const petScale = computed(() => petStore.sizePercent / 100)
+const petLayout = computed(() => {
+  const mobile = isMobileViewport.value
+  const scale = petScale.value
+  return {
+    width: (mobile ? MOBILE_WIDTH : DEFAULT_WIDTH) * scale,
+    height: (mobile ? MOBILE_HEIGHT : DEFAULT_HEIGHT) * scale,
+    stageWidth: (mobile ? MOBILE_STAGE_WIDTH : DEFAULT_STAGE_WIDTH) * scale,
+    stageHeight: (mobile ? MOBILE_STAGE_HEIGHT : DEFAULT_STAGE_HEIGHT) * scale,
+    bubbleBottom: (mobile ? 132 : 164) * scale,
+  }
+})
+
 const petPositionStyle = computed(() => ({
+  width: `${petLayout.value.width}px`,
+  height: `${petLayout.value.height}px`,
+  '--pet-stage-width': `${petLayout.value.stageWidth}px`,
+  '--pet-stage-height': `${petLayout.value.stageHeight}px`,
+  '--pet-bubble-bottom': `${petLayout.value.bubbleBottom}px`,
   transform: `translate3d(${position.value.x}px, ${position.value.y}px, 0)`,
 }))
+
+const bubblePositionStyle = computed(() => (
+  bubblePosition.value
+    ? {
+        left: `${bubblePosition.value.x}px`,
+        top: `${bubblePosition.value.y}px`,
+      }
+    : undefined
+))
+const hasBubblePosition = computed(() => bubblePosition.value !== null)
 
 // Only dataset background operations provide a numeric progress value.
 // Treat missing legacy/HMR state as no progress so normal chat only shows text.
@@ -129,8 +178,8 @@ const ariaLabel = computed(() => (
 function petBounds() {
   const rect = petRoot.value?.getBoundingClientRect()
   return {
-    width: rect?.width || DEFAULT_WIDTH,
-    height: rect?.height || DEFAULT_HEIGHT,
+    width: rect?.width || petLayout.value.width,
+    height: rect?.height || petLayout.value.height,
   }
 }
 
@@ -140,6 +189,66 @@ function clampPosition(nextPosition) {
     x: Math.min(Math.max(EDGE_GAP, nextPosition.x), Math.max(EDGE_GAP, window.innerWidth - width - EDGE_GAP)),
     y: Math.min(Math.max(EDGE_GAP, nextPosition.y), Math.max(EDGE_GAP, window.innerHeight - height - EDGE_GAP)),
   }
+}
+
+function updateBubblePosition() {
+  const bubble = petMessage.value
+  if (!bubble || !petStore.message) {
+    bubblePosition.value = null
+    return
+  }
+
+  const bubbleWidth = bubble.offsetWidth
+  const bubbleHeight = bubble.offsetHeight
+  if (!bubbleWidth || !bubbleHeight) return
+
+  const { width: petWidth, height: petHeight } = petBounds()
+  const scale = petScale.value
+  const sideInset = (isMobileViewport.value ? 4 : 10) * scale
+  const aboveBottom = petLayout.value.bubbleBottom
+  const belowOverlap = 12 * scale
+  const viewportLeft = EDGE_GAP
+  const viewportTop = EDGE_GAP
+  const viewportRight = window.innerWidth - EDGE_GAP
+  const viewportBottom = window.innerHeight - EDGE_GAP
+
+  const leftSpace = position.value.x + petWidth - sideInset - viewportLeft
+  const rightSpace = viewportRight - (position.value.x + sideInset)
+  const horizontal = rightSpace >= bubbleWidth || rightSpace > leftSpace ? 'right' : 'left'
+
+  const aboveBottomY = position.value.y + petHeight - aboveBottom
+  const belowTopY = position.value.y + petHeight - belowOverlap
+  const aboveSpace = aboveBottomY - viewportTop
+  const belowSpace = viewportBottom - belowTopY
+  const vertical = aboveSpace >= bubbleHeight || aboveSpace >= belowSpace ? 'above' : 'below'
+
+  const desiredLeft = horizontal === 'right'
+    ? position.value.x + sideInset
+    : position.value.x + petWidth - sideInset - bubbleWidth
+  const desiredTop = vertical === 'below'
+    ? belowTopY
+    : aboveBottomY - bubbleHeight
+  const clampedLeft = Math.min(
+    Math.max(viewportLeft, desiredLeft),
+    Math.max(viewportLeft, viewportRight - bubbleWidth),
+  )
+  const clampedTop = Math.min(
+    Math.max(viewportTop, desiredTop),
+    Math.max(viewportTop, viewportBottom - bubbleHeight),
+  )
+
+  bubblePlacement.value = { horizontal, vertical }
+  bubblePosition.value = {
+    x: clampedLeft - position.value.x,
+    y: clampedTop - position.value.y,
+  }
+}
+
+function observeBubbleSize() {
+  bubbleResizeObserver?.disconnect()
+  if (!petMessage.value || typeof ResizeObserver === 'undefined') return
+  bubbleResizeObserver = new ResizeObserver(updateBubblePosition)
+  bubbleResizeObserver.observe(petMessage.value)
 }
 
 function savePosition() {
@@ -238,14 +347,28 @@ function handleTaskEvent(event) {
 }
 
 function keepOnScreen() {
+  isMobileViewport.value = window.innerWidth <= 768
   position.value = clampPosition(position.value)
   savePosition()
+  nextTick(updateBubblePosition)
 }
 
 watch(() => petStore.state, () => scheduleFrame(0))
-watch(() => petStore.messageId, () => {
-  nextTick(() => { position.value = clampPosition(position.value) })
+watch(() => petStore.sizePercent, () => nextTick(keepOnScreen))
+watch(() => petStore.visible, (visible) => {
+  if (visible) nextTick(keepOnScreen)
 })
+watch(() => petStore.messageId, () => {
+  nextTick(() => {
+    position.value = clampPosition(position.value)
+    observeBubbleSize()
+    updateBubblePosition()
+  })
+})
+watch(
+  [() => position.value.x, () => position.value.y],
+  () => nextTick(updateBubblePosition),
+)
 
 onMounted(async () => {
   await nextTick()
@@ -264,6 +387,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.clearTimeout(animationTimer)
   window.clearTimeout(messageTimer)
+  bubbleResizeObserver?.disconnect()
   window.removeEventListener('resize', keepOnScreen)
   window.removeEventListener('pointerup', endDrag)
   window.removeEventListener('mouseup', endDrag)
@@ -305,9 +429,9 @@ onBeforeUnmount(() => {
 
 .pet-stage {
   position: relative;
-  width: 112px;
-  height: 160px;
-  flex: 0 0 160px;
+  width: var(--pet-stage-width, 112px);
+  height: var(--pet-stage-height, 160px);
+  flex: 0 0 var(--pet-stage-height, 160px);
   transition: transform .2s cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -339,8 +463,9 @@ onBeforeUnmount(() => {
 .pet-message {
   position: absolute;
   right: 10px;
-  bottom: 164px;
+  bottom: var(--pet-bubble-bottom, 164px);
   max-width: min(260px, calc(100vw - 32px));
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -358,8 +483,14 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.pet-message-content { min-width: 172px; }
-.pet-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; white-space: nowrap; }
+.pet-message.opens-right { border-radius: 14px 14px 14px 4px; }
+.pet-message.opens-below { border-radius: 4px 14px 14px 14px; }
+.pet-message.opens-right.opens-below { border-radius: 14px 4px 14px 14px; }
+.pet-message.is-positioned { right: auto; bottom: auto; }
+
+.pet-message-content { min-width: min(172px, calc(100vw - 74px)); max-width: 100%; }
+.pet-message-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pet-message-heading > span { min-width: 0; overflow-wrap: anywhere; }
 .pet-message-heading strong { color: $primary-color; font-size: 12px; font-variant-numeric: tabular-nums; }
 .pet-progress { width: 100%; height: 4px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--vp-primary) 13%, transparent); }
 .pet-progress span { display: block; height: 100%; border-radius: inherit; background: $primary-color; transition: width .24s ease; }
@@ -388,9 +519,7 @@ onBeforeUnmount(() => {
 .pet-bubble-leave-to { opacity: 0; transform: translateY(6px) scale(.98); }
 
 @media (max-width: 768px) {
-  .vision-pet { width: 109px; height: 146px; }
-  .pet-stage { width: 90px; height: 128px; flex-basis: 128px; }
-  .pet-message { right: 4px; bottom: 132px; }
+  .pet-message { right: 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

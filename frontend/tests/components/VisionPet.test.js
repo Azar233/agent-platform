@@ -15,6 +15,8 @@ describe('VisionPet', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     localStorage.clear()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
     setActivePinia(createPinia())
   })
 
@@ -62,6 +64,49 @@ describe('VisionPet', () => {
 
     expect(wrapper.classes()).not.toContain('is-dragging')
     expect(localStorage.getItem('vp_vision_pet_position')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('opens the message toward the viewport when the pet is at the top-left edge', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 320 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 640 })
+    localStorage.setItem('vp_vision_pet_position', JSON.stringify({ x: 16, y: 16 }))
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(VisionPet, { global: { plugins: [pinia] } })
+    await wrapper.vm.$nextTick()
+    await Promise.resolve()
+
+    const bubble = wrapper.get('.pet-message')
+    Object.defineProperty(bubble.element, 'offsetWidth', { configurable: true, value: 240 })
+    Object.defineProperty(bubble.element, 'offsetHeight', { configurable: true, value: 70 })
+
+    notifyVisionPetTask({ state: 'working', message: '正在处理任务', duration: 0 })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(bubble.classes()).toContain('opens-right')
+    expect(bubble.classes()).toContain('opens-below')
+    expect(Number.parseFloat(bubble.element.style.left)).toBeGreaterThanOrEqual(0)
+    expect(Number.parseFloat(bubble.element.style.top)).toBeGreaterThanOrEqual(0)
+    wrapper.unmount()
+  })
+
+  it('resizes the pet while keeping position and sprite dimensions in sync', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(VisionPet, { global: { plugins: [pinia] } })
+    await wrapper.vm.$nextTick()
+
+    useVisionPetStore().setSizePercent(120)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.attributes('style')).toContain('width: 160.8px')
+    expect(wrapper.attributes('style')).toContain('height: 217.2px')
+    expect(wrapper.attributes('style')).toContain('--pet-stage-width: 134.4px')
+    expect(wrapper.find('.pet-stage').exists()).toBe(true)
     wrapper.unmount()
   })
 

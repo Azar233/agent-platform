@@ -5,13 +5,13 @@ const routes = [
     path: '/login',
     name: 'Login',
     component: () => import('@/views/LoginPage.vue'),
-    meta: { title: '登录', requiresAuth: false },
+    meta: { title: '登录', requiresAuth: false, hideVisionPet: true },
   },
   {
     path: '/register',
     name: 'Register',
     component: () => import('@/views/RegisterPage.vue'),
-    meta: { title: '注册', requiresAuth: false },
+    meta: { title: '注册', requiresAuth: false, hideVisionPet: true },
   },
   {
     path: '/',

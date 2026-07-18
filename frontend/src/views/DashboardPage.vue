@@ -220,10 +220,10 @@ onBeforeUnmount(() => {
 </script>
 
 <style lang="scss" scoped>
-.dashboard-page { min-height: 100%; padding: 32px; display: flex; flex-direction: column; gap: 20px; }
-.page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 30px 32px; border: 1px solid $border-color; border-radius: $border-radius-lg; background: $surface-color; box-shadow: $shadow-sm; }
-.page-header h1 { margin: 8px 0 0; color: $text-primary; font-size: 38px; font-weight: 600; letter-spacing: -.045em; }
-.page-header p { margin: 9px 0 0; color: $text-secondary; line-height: 1.6; }
+.dashboard-page { min-height: 100%; padding: 32px; display: flex; flex-direction: column; gap: 18px; color: $text-primary; background: $bg-color; }
+.page-header { padding: 8px 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.page-header h1 { margin: 10px 0 0; color: $text-primary; font-family: 'Space Grotesk', 'DM Sans', sans-serif; font-size: 40px; line-height: 1.08; letter-spacing: 0; }
+.page-header p { max-width: 560px; margin: 12px 0 0; color: $text-secondary; font-size: 16px; line-height: 1.6; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .metric-card { min-width: 0; padding: 22px; display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 14px; border: 1px solid $border-color; border-radius: $border-radius-md; background: $surface-color; box-shadow: $shadow-sm; }
 .metric-icon { width: 46px; height: 46px; display: grid; place-items: center; border-radius: 14px; font-size: 20px; }.metric-icon.blue { color: #0071e3; background: rgba(0,113,227,.1); }.metric-icon.green { color: #248a3d; background: rgba(52,199,89,.12); }.metric-icon.orange { color: #c93400; background: rgba(255,159,10,.13); }.metric-icon.purple { color: #8944ab; background: rgba(175,82,222,.12); }
@@ -231,5 +231,5 @@ onBeforeUnmount(() => {
 .growth { grid-column: 1 / -1; width: fit-content; padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }.growth.positive { color: $success-color; background: color-mix(in srgb, $success-color 12%, transparent); }.growth.negative { color: $danger-color; background: color-mix(in srgb, $danger-color 10%, transparent); }.growth.neutral { color: $text-secondary; background: $surface-muted; }
 .chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }.chart-card { min-width: 0; overflow: hidden; border: 1px solid $border-color; border-radius: $border-radius-md; background: $surface-color; box-shadow: $shadow-sm; }.chart-card.chart-wide { grid-column: 1 / -1; }.chart-card header { min-height: 70px; padding: 0 22px; display: flex; align-items: center; border-bottom: 1px solid $border-color; }.chart-card header div { display: flex; flex-direction: column; gap: 4px; }.chart-card header span { color: $text-primary; font-weight: 600; }.chart-card header small { color: $text-secondary; }.chart { width: 100%; height: 330px; }.chart-wide .chart { height: 360px; }
 @media (max-width: 1100px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 760px) { .dashboard-page { padding: 12px; }.page-header { padding: 24px; align-items: flex-start; flex-direction: column; }.metric-grid, .chart-grid { grid-template-columns: 1fr; }.chart-card.chart-wide { grid-column: auto; }.chart { height: 300px; } }
+@media (max-width: 760px) { .dashboard-page { padding: 20px; }.page-header { align-items: flex-start; flex-direction: column; }.page-header h1 { font-size: 30px; }.metric-grid, .chart-grid { grid-template-columns: 1fr; }.chart-card.chart-wide { grid-column: auto; }.chart { height: 300px; } }
 </style>
