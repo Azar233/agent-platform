@@ -18,7 +18,7 @@
       <el-table-column label="操作次数" width="92" align="center"><template #default="{ row }">{{ row.operation_count }}</template></el-table-column>
       <el-table-column label="创建时间" min-width="166"><template #default="{ row }">{{ formatDate(row.created_at) }}</template></el-table-column>
       <el-table-column label="最近操作" min-width="166"><template #default="{ row }">{{ formatDate(row.latest_operation_at) }}</template></el-table-column>
-      <el-table-column label="操作" width="92" fixed="right"><template #default="{ row }"><el-button size="small" :icon="View" @click="openDetail(row)">详情</el-button></template></el-table-column>
+      <el-table-column label="操作" width="104" fixed="right" align="center"><template #default="{ row }"><div class="vp-table-action-safe-area"><el-button class="vp-table-action-button" size="small" :icon="View" @click="openDetail(row)">详情</el-button></div></template></el-table-column>
     </el-table>
 
     <footer class="pagination-row"><span>共 {{ pagination.total }} 个模型版本</span><el-pagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :page-sizes="[10,20,50]" :total="pagination.total" layout="sizes, prev, pager, next" @current-change="loadItems" @size-change="handleSizeChange" /></footer>

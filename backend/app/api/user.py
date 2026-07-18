@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.config.settings import settings
 from app.database.session import get_db
-from app.entity.schemas import ChangePassword, UserUpdate
+from app.entity.schemas import AgentCustomInstructionsUpdate, ChangePassword, UserUpdate
 from app.services.user_service import user_service
 
 router = APIRouter(prefix="/api/user", tags=["用户管理"])
@@ -75,6 +75,27 @@ def update_profile(
     if "avatar" in changes and result["user"].get("avatar") != previous_avatar:
         _remove_local_avatar(previous_avatar)
     return result
+
+
+@router.get("/agent-instructions", summary="读取当前用户的 Agent 自定义指令")
+def get_agent_custom_instructions(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return user_service.get_agent_custom_instructions(db, int(current_user.id))
+
+
+@router.put("/agent-instructions", summary="更新当前用户的 Agent 自定义指令")
+def update_agent_custom_instructions(
+    request: AgentCustomInstructionsUpdate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return user_service.update_agent_custom_instructions(
+        db,
+        int(current_user.id),
+        instructions=request.instructions,
+    )
 
 
 @router.post("/avatar", summary="上传用户头像")

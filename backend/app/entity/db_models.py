@@ -36,6 +36,11 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False, comment="加密密码")
     phone = Column(String(20), nullable=True, comment="手机号")
     avatar = Column(String(500), nullable=True, comment="头像 URL")
+    agent_custom_instructions = Column(
+        Text,
+        nullable=True,
+        comment="用户级 Agent 响应偏好，仅用于语言、语气和输出格式",
+    )
     is_active = Column(Boolean, default=True, comment="是否启用")
     is_superuser = Column(Boolean, default=False, comment="是否超级管理员")
     last_login_at = Column(DateTime, nullable=True, comment="最后登录时间")

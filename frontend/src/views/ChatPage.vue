@@ -73,6 +73,7 @@
                 <span v-if="message.role === 'assistant' && message.loading && message.content" class="stream-cursor"></span>
                 <div v-if="message.files?.length" class="message-files"><span v-for="file in message.files" :key="file.name"><el-icon><Document /></el-icon>{{ file.name }}</span></div>
                 <div v-if="message.loading && !message.content" class="thinking"><span></span><span></span><span></span><em>{{ agentName(message.agent) }} 正在思考</em></div>
+                <KnowledgeSourcesCard v-if="message.knowledgeSources" :payload="message.knowledgeSources" />
                 <AgentInputFormCard v-if="message.inputForm" :form="message.inputForm" @submit="submitInputForm" />
                 <el-button v-if="message.handoff?.page_url" class="handoff-action" type="primary" plain @click="router.push(message.handoff.page_url)">前往数据集页面完成人工标注 <el-icon><ArrowRight /></el-icon></el-button>
                 <AgentConfirmationCard v-if="message.confirmation" :operation="message.confirmation" @changed="loadPendingOperations" />
@@ -156,6 +157,7 @@ import {
 import AgentConfirmationCard from '@/components/AgentConfirmationCard.vue'
 import AgentInputFormCard from '@/components/AgentInputFormCard.vue'
 import DetectionResultCard from '@/components/DetectionResultCard.vue'
+import KnowledgeSourcesCard from '@/components/KnowledgeSourcesCard.vue'
 import {
   createChatSessionApi, deleteChatSessionApi, getAgentStatusApi,
   getChatSessionApi, getChatSessionsApi, uploadChatFilesApi,
@@ -240,6 +242,7 @@ function toolName(name) { return ({
   preview_update_product_price: '预览价格变更', preview_clear_product_price: '预览清除价格',
   request_user_input_form: '生成参数问询表单', get_platform_agent_capabilities: '读取 Agent 能力边界',
   search_knowledge: '检索知识库', search_incidents: '检索故障案例',
+  search_management_knowledge: '检索知识库', search_fault_cases: '检索故障案例',
   parallel_running: '协调多个 Agent 协作', pipeline_running: '按流水线依次执行', supervisor_summary: '汇总各 Agent 结果',
 })[name] || name }
 // 编排类状态不是业务工具，不显示“正在调用”前缀。
@@ -280,7 +283,12 @@ async function openSession(sessionUuid) {
   try {
     const data = await getChatSessionApi(sessionUuid)
     agentStore.currentSessionId = sessionUuid
-    agentStore.messages = data.messages.map((message) => ({ ...message, inputForm: message.input_form, loading: false }))
+    agentStore.messages = data.messages.map((message) => ({
+      ...message,
+      inputForm: message.input_form,
+      knowledgeSources: message.knowledge_sources,
+      loading: false,
+    }))
     await Promise.allSettled(agentStore.messages.filter((message) => message.confirmation?.operation_uuid).map(async (message) => {
       Object.assign(message.confirmation, await getAgentOperationApi(message.confirmation.operation_uuid))
     }))
@@ -341,7 +349,7 @@ async function sendMessage() {
   let sessionUuid
   try { sessionUuid = await ensureSession() } catch (error) { ElMessage.error(error.message || '无法创建对话'); return }
   agentStore.addMessage({ role: 'user', content: text, files: files.map((file) => ({ name: file.name })) })
-  const assistant = agentStore.addMessage({ role: 'assistant', content: '', loading: true, tool: '', result: null, agent: '', parallelAgents: [], _lastTextAgent: '' })
+  const assistant = agentStore.addMessage({ role: 'assistant', content: '', loading: true, tool: '', result: null, agent: '', parallelAgents: [], _lastTextAgent: '', knowledgeSources: null })
   inputText.value = ''; agentStore.setLoading(true); scrollBottom()
   try {
     const upload = files.length ? await uploadChatFilesApi(files) : { files: [] }
@@ -379,6 +387,7 @@ async function sendMessage() {
         }
         if (event.type === 'tool_call') assistant.tool = event.tool
         if (event.type === 'tool_result') assistant.tool = ''
+        if (event.type === 'knowledge_sources') { assistant.knowledgeSources = event; assistant.tool = '' }
         if (event.type === 'input_form') { assistant.inputForm = event.form; assistant.tool = '' }
         if (event.type === 'handoff_required') { assistant.handoff = event; assistant.tool = '' }
         if (event.type === 'confirmation_required') { assistant.confirmation = event.operation; assistant.tool = ''; loadPendingOperations() }

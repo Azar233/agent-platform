@@ -6,6 +6,12 @@ from typing import AsyncGenerator
 from app.agent.prompts import KNOWLEDGE_PROMPT
 from app.agent.scoped_agent import ScopedToolAgent
 from app.agent.tools import build_interaction_tools, build_knowledge_tools
+from app.rag.grounding import (
+    KNOWLEDGE_TOOL,
+    forced_retrieval_tools,
+    merge_retrieval_results,
+    structured_retrieval_result,
+)
 
 
 class KnowledgeAgent(ScopedToolAgent):
@@ -43,6 +49,7 @@ class KnowledgeAgent(ScopedToolAgent):
         message: str,
         history: list[dict[str, str]] | None = None,
         runtime_context: str = "无",
+        custom_instructions: str = "",
     ) -> AsyncGenerator[dict, None]:
         target = self._capability_target(message)
         if target:
@@ -64,6 +71,26 @@ class KnowledgeAgent(ScopedToolAgent):
                 "content": content,
             }
             payload = json.loads(content)
+            if custom_instructions:
+                capability_history = list(history or [])
+                capability_history.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "以下是本轮必须保持准确的平台运行时能力事实。请根据用户的响应偏好整理后回答，"
+                            "不得修改事实、扩大权限或重复调用 get_platform_agent_capabilities。\n"
+                            + json.dumps(payload, ensure_ascii=False)
+                        ),
+                    }
+                )
+                async for event in super().stream(
+                    message,
+                    capability_history,
+                    runtime_context,
+                    custom_instructions,
+                ):
+                    yield event
+                return
             yield {
                 "type": "text_chunk",
                 "agent": self.name,
@@ -71,5 +98,67 @@ class KnowledgeAgent(ScopedToolAgent):
             }
             return
 
-        async for event in super().stream(message, history, runtime_context):
+        retrievals = []
+        for tool_name in forced_retrieval_tools(message):
+            tool = next((item for item in self.tools if item.name == tool_name), None)
+            if tool is None:
+                continue
+            tool_input = {"query": message}
+            if tool_name == KNOWLEDGE_TOOL:
+                tool_input["domain"] = ""
+            yield {
+                "type": "tool_call",
+                "agent": self.name,
+                "tool": tool_name,
+                "input": tool_input,
+                "forced": True,
+            }
+            content = tool.invoke(tool_input)
+            yield {
+                "type": "tool_result",
+                "agent": self.name,
+                "tool": tool_name,
+                "content": content,
+                "forced": True,
+            }
+            try:
+                parsed = json.loads(content)
+            except (TypeError, json.JSONDecodeError):
+                parsed = {"error": "检索工具返回了无法解析的结果"}
+            retrievals.append(
+                structured_retrieval_result(tool_name=tool_name, result=parsed)
+            )
+
+        augmented_history = list(history or [])
+        if retrievals:
+            grounding = merge_retrieval_results(message, retrievals)
+            yield {
+                "type": "knowledge_sources",
+                "agent": self.name,
+                **grounding,
+            }
+            augmented_history.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "系统已经在本轮强制执行知识检索。请直接依据下列结构化检索结果回答，"
+                        "不要重复调用 search_management_knowledge 或 search_fault_cases。"
+                        "如果 has_knowledge=false，必须明确说明没有检索到满足阈值的可靠资料；"
+                        "不要把模型自身推断表述为平台事实。\n"
+                        + json.dumps(grounding, ensure_ascii=False)
+                    ),
+                }
+            )
+
+        parent_stream = (
+            super().stream(
+                message,
+                augmented_history,
+                runtime_context,
+                custom_instructions,
+            )
+            if custom_instructions
+            else super().stream(message, augmented_history, runtime_context)
+        )
+        async for event in parent_stream:
             yield event

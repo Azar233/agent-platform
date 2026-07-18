@@ -16,7 +16,7 @@
       <el-table-column label="Token" width="92" align="right"><template #default="{ row }">{{ row.tokens_used != null ? row.tokens_used.toLocaleString() : '—' }}</template></el-table-column>
       <el-table-column label="耗时" width="100" align="right"><template #default="{ row }">{{ row.latency_ms != null ? `${row.latency_ms} ms` : '—' }}</template></el-table-column>
       <el-table-column label="状态" width="94"><template #default="{ row }"><el-tag :type="row.status === 'completed' ? 'success' : 'danger'" effect="light" round>{{ row.status === 'completed' ? '已完成' : '失败' }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="92" fixed="right"><template #default="{ row }"><el-button size="small" :icon="View" @click="openDetail(row)">详情</el-button></template></el-table-column>
+      <el-table-column label="操作" width="104" fixed="right" align="center"><template #default="{ row }"><div class="vp-table-action-safe-area"><el-button class="vp-table-action-button" size="small" :icon="View" @click="openDetail(row)">详情</el-button></div></template></el-table-column>
     </el-table>
 
     <footer class="pagination-row"><span>共 {{ pagination.total }} 次调用</span><el-pagination v-model:current-page="pagination.page" v-model:page-size="pagination.pageSize" :page-sizes="[10,20,50]" :total="pagination.total" layout="sizes, prev, pager, next" @current-change="loadItems" @size-change="handleSizeChange" /></footer>

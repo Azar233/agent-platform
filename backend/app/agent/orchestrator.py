@@ -71,12 +71,14 @@ class MultiAgentOrchestrator:
         scene_id: int | None,
         session_uuid: str,
         context_state: dict | None = None,
+        custom_instructions: str = "",
         detection_agent_factory: Callable = DetectionAgent,
     ) -> None:
         self.user_id = user_id
         self.scene_id = scene_id
         self.session_uuid = session_uuid
         self.context_state = context_state or {}
+        self.custom_instructions = str(custom_instructions or "")
         self.detection_agent_factory = detection_agent_factory
         self.router = AgentRouter()
 
@@ -171,14 +173,24 @@ class MultiAgentOrchestrator:
         history: list[dict[str, str]] | None,
         extra_context: str | None = None,
     ) -> AsyncGenerator[dict, None]:
-        """Return the async event stream for a single agent."""
+        """Return the async event stream for a single agent.
+
+        User-scoped custom instructions (from main) are forwarded to agents that
+        support them, in both single and multi-agent paths.
+        """
         if agent_name == "detection":
             agent = self.detection_agent_factory(user_id=self.user_id, scene_id=self.scene_id)
+            if self.custom_instructions:
+                return agent.stream(
+                    message, attachment_paths, history, self.custom_instructions
+                )
             return agent.stream(message, attachment_paths, history)
         agent = self._management_agent(agent_name)
         context = self._runtime_context(message)
         if extra_context:
             context = f"{context}\n\n{extra_context}" if context != "无" else extra_context
+        if self.custom_instructions:
+            return agent.stream(message, history, context, self.custom_instructions)
         return agent.stream(message, history, context)
 
     async def stream(

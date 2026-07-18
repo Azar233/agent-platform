@@ -104,13 +104,12 @@
           </el-table-column>
           <el-table-column label="操作" width="120" fixed="right" align="center">
             <template #default="{ row }">
-              <div class="table-actions">
+              <div class="table-actions vp-table-action-safe-area">
                 <el-button
-                  class="row-action edit-action"
+                  class="row-action vp-table-action-button is-primary-action"
                   size="small"
                   :icon="Edit"
                   :aria-label="row.has_price ? '编辑价格' : '配置价格'"
-                  :title="row.has_price ? '编辑价格' : '配置价格'"
                   @click="openEditDialog(row)"
                 >
                   <span class="row-action-label">{{ row.has_price ? '编辑' : '配置价格' }}</span>
@@ -511,6 +510,7 @@ async function autoSelectDefaultModelDataset() {
     width: 32px;
     min-width: 32px;
     height: 32px;
+    min-height: 32px;
     padding: 0;
   }
 

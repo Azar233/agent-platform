@@ -192,6 +192,31 @@ class UserService:
         return {"message": "个人信息已更新", "user": UserService.serialize_user(user)}
 
     @staticmethod
+    def get_agent_custom_instructions(db: Session, user_id: int) -> dict:
+        user = UserService.get_user_by_id(db, user_id)
+        return {
+            "instructions": user.agent_custom_instructions or "",
+            "max_length": 4000,
+        }
+
+    @staticmethod
+    def update_agent_custom_instructions(
+        db: Session,
+        user_id: int,
+        *,
+        instructions: str,
+    ) -> dict:
+        user = UserService.get_user_by_id(db, user_id)
+        normalized = str(instructions or "").replace("\r\n", "\n").strip()
+        user.agent_custom_instructions = normalized or None
+        db.commit()
+        return {
+            "message": "Agent 自定义指令已更新" if normalized else "Agent 自定义指令已清除",
+            "instructions": normalized,
+            "max_length": 4000,
+        }
+
+    @staticmethod
     def change_password(
         db: Session,
         user_id: int,

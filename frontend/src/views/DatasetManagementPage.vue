@@ -121,20 +121,20 @@
         </el-table-column>
         <el-table-column label="操作" width="276" fixed="right">
           <template #default="{ row }">
-            <div class="row-actions">
-              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button" size="small" :icon="Edit" @click="openEditDialog(row)">编辑</el-button>
-              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button is-primary-action" size="small" :icon="Plus" @click="openAddProductDialog(row)">添加样本</el-button>
-              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button is-danger-action" size="small" :icon="Delete" @click="openDeleteProductDialog(row)">删除商品</el-button>
-              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button" size="small" :icon="CircleCheck" @click="validateRow(row)">校验</el-button>
-              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button is-primary-action" size="small" :icon="Lock" @click="freezeRow(row)">冻结</el-button>
+            <div class="row-actions vp-table-action-safe-area">
+              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button vp-table-action-button" size="small" :icon="Edit" @click="openEditDialog(row)">编辑</el-button>
+              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button vp-table-action-button is-primary-action" size="small" :icon="Plus" @click="openAddProductDialog(row)">添加样本</el-button>
+              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button vp-table-action-button is-danger-action" size="small" :icon="Delete" @click="openDeleteProductDialog(row)">删除商品</el-button>
+              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button vp-table-action-button" size="small" :icon="CircleCheck" @click="validateRow(row)">校验</el-button>
+              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button vp-table-action-button is-primary-action" size="small" :icon="Lock" @click="freezeRow(row)">冻结</el-button>
               <el-button
                 v-if="canArchiveDataset(row.status)"
-                class="row-action-button"
+                class="row-action-button vp-table-action-button"
                 size="small"
                 @click="archiveRow(row)"
               >归档</el-button>
-              <el-button v-if="canDeriveDataset(row.status)" class="row-action-button is-primary-action" size="small" @click="openDeriveDialog(row)">派生版本</el-button>
-              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button is-danger-action" size="small" :icon="Delete" @click="deleteRow(row)">删除草稿</el-button>
+              <el-button v-if="canDeriveDataset(row.status)" class="row-action-button vp-table-action-button is-primary-action" size="small" @click="openDeriveDialog(row)">派生版本</el-button>
+              <el-button v-if="isDatasetDraft(row.status)" class="row-action-button vp-table-action-button is-danger-action" size="small" :icon="Delete" @click="deleteRow(row)">删除草稿</el-button>
             </div>
           </template>
         </el-table-column>

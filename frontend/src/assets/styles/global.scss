@@ -205,6 +205,7 @@ html.dark .el-table tr,
 html.dark .el-table th.el-table__cell,
 html.dark .el-table td.el-table__cell { color: #d1d5db; background: #171a21; border-color: rgba(255, 255, 255, .08); }
 html.dark .el-table__inner-wrapper::before { background: rgba(255, 255, 255, .08); }
+html.dark .price-management-page .subtitle { color: #a1a1a6; }
 html.dark .el-input__wrapper,
 html.dark .el-textarea__inner,
 html.dark .el-select__wrapper,
@@ -320,6 +321,83 @@ html.dark .el-button--primary {
 }
 
 .el-button.is-circle { width: 36px; padding: 0; }
+
+/* Table row actions follow the Training page interaction with safe lift space. */
+.vp-table-action-safe-area {
+  min-height: 38px;
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.el-button.vp-table-action-button {
+  width: max-content;
+  min-width: 74px;
+  height: 30px;
+  min-height: 30px;
+  margin: 0 !important;
+  padding: 0 6px;
+  border: 1px solid $border-strong;
+  border-radius: 7px;
+  color: $text-regular;
+  background: $surface-color;
+  box-shadow: none !important;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: transform .2s ease, border-color .18s ease, color .18s ease, background-color .18s ease;
+}
+
+.el-button.vp-table-action-button:hover,
+.el-button.vp-table-action-button:focus-visible {
+  border-color: $text-secondary;
+  color: $text-primary;
+  background: $surface-muted;
+  transform: translateY(-1px);
+}
+
+.el-button.vp-table-action-button:active { transform: scale(.98); }
+
+.el-button.vp-table-action-button.is-primary-action {
+  border-color: $primary-color;
+  color: $primary-color;
+  background: $primary-soft;
+}
+
+.el-button.vp-table-action-button.is-primary-action:hover,
+.el-button.vp-table-action-button.is-primary-action:focus-visible {
+  border-color: $primary-hover;
+  color: $primary-hover;
+  background: color-mix(in srgb, $primary-color 22%, $surface-color);
+}
+
+.el-button.vp-table-action-button.is-success-action {
+  border-color: $success-color;
+  color: $success-color;
+  background: color-mix(in srgb, $success-color 12%, $surface-color);
+}
+
+.el-button.vp-table-action-button.is-success-action:hover,
+.el-button.vp-table-action-button.is-success-action:focus-visible {
+  border-color: $success-color;
+  color: $success-color;
+  background: color-mix(in srgb, $success-color 20%, $surface-color);
+}
+
+.el-button.vp-table-action-button.is-danger-action {
+  border-color: $danger-color;
+  color: $danger-color;
+  background: color-mix(in srgb, $danger-color 10%, $surface-color);
+}
+
+.el-button.vp-table-action-button.is-danger-action:hover,
+.el-button.vp-table-action-button.is-danger-action:focus-visible {
+  border-color: $danger-color;
+  color: $danger-color;
+  background: color-mix(in srgb, $danger-color 18%, $surface-color);
+}
 
 .el-input__wrapper,
 .el-textarea__inner,

@@ -1,10 +1,15 @@
 <template>
   <router-view />
-  <VisionPet />
+  <VisionPet v-if="showVisionPet" />
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import VisionPet from '@/components/VisionPet.vue'
+
+const route = useRoute()
+const showVisionPet = computed(() => route.meta.hideVisionPet !== true)
 
 // 根组件仅作为路由出口
 </script>
