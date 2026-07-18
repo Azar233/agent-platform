@@ -100,13 +100,12 @@
           </el-table-column>
           <el-table-column label="操作" width="120" fixed="right" align="center">
             <template #default="{ row }">
-              <div class="table-actions">
+              <div class="table-actions vp-table-action-safe-area">
                 <el-button
-                  class="row-action edit-action"
+                  class="row-action vp-table-action-button is-primary-action"
                   size="small"
                   :icon="Edit"
                   :aria-label="row.has_price ? '编辑价格' : '配置价格'"
-                  :title="row.has_price ? '编辑价格' : '配置价格'"
                   @click="openEditDialog(row)"
                 >
                   <span class="row-action-label">{{ row.has_price ? '编辑' : '配置价格' }}</span>
@@ -420,15 +419,9 @@ async function autoSelectDefaultModelDataset() {
 .row-action {
   min-width: 88px;
   max-width: 100%;
-  margin-left: 0;
-  padding-inline: 12px;
-  border-radius: 8px;
-  font-weight: 500;
 
   :deep(.el-icon) { flex: 0 0 auto; }
 }
-.edit-action { color: var(--vp-primary); border-color: var(--vp-primary); background: var(--vp-primary-soft); }
-.edit-action:hover, .edit-action:focus-visible { color: var(--vp-primary-hover); border-color: var(--vp-primary-hover); background: var(--vp-primary-soft); }
 
 .pagination-row {
   min-height: 64px;
@@ -450,6 +443,7 @@ async function autoSelectDefaultModelDataset() {
     width: 32px;
     min-width: 32px;
     height: 32px;
+    min-height: 32px;
     padding: 0;
   }
 
