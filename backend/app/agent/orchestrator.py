@@ -22,12 +22,14 @@ class MultiAgentOrchestrator:
         scene_id: int | None,
         session_uuid: str,
         context_state: dict | None = None,
+        custom_instructions: str = "",
         detection_agent_factory: Callable = DetectionAgent,
     ) -> None:
         self.user_id = user_id
         self.scene_id = scene_id
         self.session_uuid = session_uuid
         self.context_state = context_state or {}
+        self.custom_instructions = str(custom_instructions or "")
         self.detection_agent_factory = detection_agent_factory
         self.router = AgentRouter()
 
@@ -84,12 +86,27 @@ class MultiAgentOrchestrator:
         yield selected.event()
         if selected.agent == "detection":
             agent = self.detection_agent_factory(user_id=self.user_id, scene_id=self.scene_id)
-            async for event in agent.stream(message, attachment_paths, history):
+            agent_stream = (
+                agent.stream(
+                    message,
+                    attachment_paths,
+                    history,
+                    self.custom_instructions,
+                )
+                if self.custom_instructions
+                else agent.stream(message, attachment_paths, history)
+            )
+            async for event in agent_stream:
                 event.setdefault("agent", "detection")
                 yield event
             return
 
         agent = self._management_agent(selected.agent)
         context = self._runtime_context(message)
-        async for event in agent.stream(message, history, context):
+        agent_stream = (
+            agent.stream(message, history, context, self.custom_instructions)
+            if self.custom_instructions
+            else agent.stream(message, history, context)
+        )
+        async for event in agent_stream:
             yield event

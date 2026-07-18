@@ -4,7 +4,7 @@
       <div>
         <span class="vp-kicker">Account</span>
         <h1>账号设置</h1>
-        <p>维护个人联系方式与登录密码。用户名和角色由管理员统一管理。</p>
+        <p>维护个人资料、Agent 响应偏好与登录安全。用户名和角色由管理员统一管理。</p>
       </div>
     </header>
 
@@ -12,7 +12,7 @@
       <aside class="settings-sidebar" aria-label="设置分类">
         <div class="sidebar-heading">
           <strong>设置中心</strong>
-          <span>管理账户与桌宠偏好</span>
+          <span>管理账户、Agent 与桌宠偏好</span>
         </div>
 
         <nav class="settings-nav" role="tablist" aria-label="设置分类">
@@ -27,6 +27,18 @@
           >
             <span class="nav-icon"><el-icon><User /></el-icon></span>
             <span class="nav-copy"><strong>个人资料</strong><small>头像与联系方式</small></span>
+          </button>
+          <button
+            type="button"
+            class="settings-nav-item instructions"
+            :class="{ active: activeSettingsSection === 'instructions' }"
+            role="tab"
+            :aria-selected="activeSettingsSection === 'instructions'"
+            aria-controls="settings-instructions-panel"
+            @click="activeSettingsSection = 'instructions'"
+          >
+            <span class="nav-icon"><el-icon><EditPen /></el-icon></span>
+            <span class="nav-copy"><strong>自定义指令</strong><small>语言、语气与格式</small></span>
           </button>
           <button
             type="button"
@@ -99,6 +111,59 @@
               </div>
               <div class="form-actions"><el-button type="primary" :loading="profileLoading" @click="saveProfile">保存个人资料</el-button></div>
             </el-form>
+          </div>
+        </section>
+
+        <section
+          v-show="activeSettingsSection === 'instructions'"
+          id="settings-instructions-panel"
+          class="settings-panel"
+          role="tabpanel"
+        >
+          <header class="panel-heading instructions-heading">
+            <div class="panel-icon instructions"><el-icon><EditPen /></el-icon></div>
+            <div>
+              <h2>Agent 自定义指令</h2>
+              <p>为当前账号的所有管理端 Agent 提供统一的响应偏好。</p>
+            </div>
+            <el-button
+              type="primary"
+              :loading="instructionsLoading"
+              :disabled="!instructionsDirty"
+              @click="saveAgentInstructions"
+            >
+              保存
+            </el-button>
+          </header>
+
+          <div class="instructions-editor">
+            <div class="instructions-copy">
+              <strong>希望 Agent 如何回答</strong>
+              <p>可以指定语言、角色化口吻、自称方式、详细程度和内容格式。保存后，新消息会立即使用这些偏好。</p>
+            </div>
+            <el-input
+              v-model="agentInstructions"
+              type="textarea"
+              :autosize="{ minRows: 10, maxRows: 18 }"
+              maxlength="4000"
+              show-word-limit
+              resize="vertical"
+              placeholder="例如：始终使用中文，语气专业直接；先给结论，再给必要说明；涉及多项数据时优先使用 Markdown 表格。"
+              aria-label="Agent 自定义指令"
+            />
+            <div class="instruction-examples">
+              <span>快速添加</span>
+              <button v-for="example in instructionExamples" :key="example" type="button" @click="appendInstruction(example)">
+                {{ example }}
+              </button>
+            </div>
+            <div class="instructions-boundary">
+              <div>
+                <strong>应用边界</strong>
+                <span>可以改变表达角色和口吻，但不会改变 Agent 的真实身份、职责、工具权限、事实来源、操作确认和审计规则。</span>
+              </div>
+              <el-button text :disabled="instructionsLoading || !agentInstructions" @click="clearAgentInstructions">清除指令</el-button>
+            </div>
           </div>
         </section>
 
@@ -177,11 +242,17 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Lock, Monitor, Upload, User } from '@element-plus/icons-vue'
+import { EditPen, Lock, Monitor, Upload, User } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import petSprites from '@/assets/pet/visionpay-pet-sprites-v4.png'
 import { getUserInfoApi } from '@/api/auth'
-import { changePassword as changePasswordApi, updateProfile as updateProfileApi, uploadAvatar as uploadAvatarApi } from '@/api/user'
+import {
+  changePassword as changePasswordApi,
+  getAgentInstructions as getAgentInstructionsApi,
+  updateAgentInstructions as updateAgentInstructionsApi,
+  updateProfile as updateProfileApi,
+  uploadAvatar as uploadAvatarApi,
+} from '@/api/user'
 import { useUserStore } from '@/stores/user'
 import { useVisionPetStore, VISION_PET_DEFAULT_SIZE } from '@/stores/visionPet'
 
@@ -192,11 +263,21 @@ const passwordFormRef = ref()
 const profileLoading = ref(false)
 const passwordLoading = ref(false)
 const avatarLoading = ref(false)
+const instructionsLoading = ref(false)
 const activeSettingsSection = ref('profile')
+const agentInstructions = ref('')
+const savedAgentInstructions = ref('')
 const profileForm = reactive({ username: '', email: '', phone: '', avatar: '', roles: [], created_at: null, last_login_at: null })
 const passwordForm = reactive({ old_password: '', new_password: '', confirm_password: '' })
 const roleText = computed(() => profileForm.roles?.length ? profileForm.roles.join('、') : '普通用户')
 const avatarInitial = computed(() => profileForm.username?.charAt(0)?.toUpperCase() || 'U')
+const instructionsDirty = computed(() => agentInstructions.value.trim() !== savedAgentInstructions.value)
+const instructionExamples = [
+  '始终使用中文回答',
+  '语气专业、直接，不使用寒暄',
+  '先给结论，再说明关键依据',
+  '多项数据优先使用 Markdown 表格',
+]
 const petVisible = computed({
   get: () => petStore.visible,
   set: (visible) => petStore.setVisible(visible),
@@ -250,6 +331,41 @@ async function loadProfile() {
     fillProfile(user)
     userStore.setUser(user)
   } catch { ElMessage.error('个人资料加载失败') }
+}
+
+async function loadAgentInstructions() {
+  instructionsLoading.value = true
+  try {
+    const data = await getAgentInstructionsApi()
+    agentInstructions.value = data.instructions || ''
+    savedAgentInstructions.value = agentInstructions.value
+  } catch {
+    ElMessage.error('自定义指令加载失败')
+  } finally {
+    instructionsLoading.value = false
+  }
+}
+
+function appendInstruction(value) {
+  if (agentInstructions.value.includes(value)) return
+  agentInstructions.value = [agentInstructions.value.trim(), value].filter(Boolean).join('\n')
+}
+
+async function saveAgentInstructions() {
+  instructionsLoading.value = true
+  try {
+    const data = await updateAgentInstructionsApi(agentInstructions.value)
+    agentInstructions.value = data.instructions || ''
+    savedAgentInstructions.value = agentInstructions.value
+    ElMessage.success(data.message || '自定义指令已保存')
+  } finally {
+    instructionsLoading.value = false
+  }
+}
+
+async function clearAgentInstructions() {
+  agentInstructions.value = ''
+  await saveAgentInstructions()
 }
 
 async function saveProfile() {
@@ -307,7 +423,7 @@ async function savePassword() {
   } finally { passwordLoading.value = false }
 }
 
-onMounted(loadProfile)
+onMounted(() => Promise.all([loadProfile(), loadAgentInstructions()]))
 </script>
 
 <style lang="scss" scoped>
@@ -428,6 +544,7 @@ onMounted(loadProfile)
 
 .settings-nav-item.profile.active .nav-icon { color: $primary-color; background: $primary-soft; }
 .settings-nav-item.security.active .nav-icon { color: #9b51c4; background: rgba(175, 82, 222, .12); }
+.settings-nav-item.instructions.active .nav-icon { color: #c56a16; background: rgba(245, 158, 11, .13); }
 .settings-nav-item.pet.active .nav-icon { color: #0d9f73; background: rgba(16, 185, 129, .12); }
 
 .nav-copy {
@@ -472,7 +589,82 @@ onMounted(loadProfile)
 
   &.profile { color: $primary-color; background: $primary-soft; }
   &.security { color: #9b51c4; background: rgba(175, 82, 222, .12); }
+  &.instructions { color: #c56a16; background: rgba(245, 158, 11, .13); }
   &.pet { color: #0d9f73; background: rgba(16, 185, 129, .12); }
+}
+
+.instructions-heading {
+  align-items: center;
+
+  > div:nth-child(2) { min-width: 0; }
+  > .el-button { margin-left: auto; min-width: 78px; }
+}
+
+.instructions-editor {
+  max-width: 900px;
+  padding: 22px;
+  border: 1px solid $border-color;
+  border-radius: 16px;
+  background: color-mix(in srgb, $surface-muted 68%, $surface-color);
+}
+
+.instructions-copy {
+  margin-bottom: 16px;
+
+  strong { color: $text-primary; font-size: 15px; }
+  p { margin: 6px 0 0; color: $text-secondary; font-size: 11px; line-height: 1.6; }
+}
+
+.instructions-editor :deep(.el-textarea__inner) {
+  min-height: 224px !important;
+  padding: 16px 17px 30px;
+  border: 1px solid $border-color;
+  border-radius: 13px;
+  color: $text-primary;
+  background: $surface-color;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+
+  &:focus { border-color: $primary-color; box-shadow: 0 0 0 3px $primary-soft; }
+}
+
+.instruction-examples {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+
+  > span { margin-right: 2px; color: $text-placeholder; font-size: 10px; }
+  button {
+    padding: 6px 9px;
+    border: 1px solid $border-color;
+    border-radius: 999px;
+    color: $text-secondary;
+    background: $surface-color;
+    font: inherit;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  button:hover { color: $primary-color; border-color: color-mix(in srgb, $primary-color 34%, $border-color); }
+}
+
+.instructions-boundary {
+  min-height: 64px;
+  margin-top: 18px;
+  padding-top: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-top: 1px solid $border-color;
+
+  strong,
+  span { display: block; }
+  strong { color: $text-primary; font-size: 11px; }
+  span { margin-top: 4px; color: $text-placeholder; font-size: 10px; line-height: 1.5; }
 }
 
 .panel-body { max-width: 920px; }
@@ -677,10 +869,14 @@ onMounted(loadProfile)
   .settings-nav-item { min-width: 162px; padding: 9px 10px; }
   .settings-content { padding: 20px 18px 24px; }
   .panel-heading { align-items: flex-start; }
+  .instructions-heading { flex-wrap: wrap; }
+  .instructions-heading > .el-button { margin-left: 55px; }
   .panel-heading h2 { font-size: 20px; }
   .avatar-editor { align-items: flex-start; flex-direction: column; }
   .form-grid { grid-template-columns: 1fr; }
   .pet-controls { padding: 0 16px; }
   .preference-footer { align-items: flex-start; flex-direction: column; }
+  .instructions-editor { padding: 16px; }
+  .instructions-boundary { align-items: flex-start; flex-direction: column; }
 }
 </style>

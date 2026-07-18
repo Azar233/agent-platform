@@ -6,6 +6,10 @@ import json
 from typing import Any, AsyncGenerator
 
 from app.agent.detection_agent import AgentConfigurationError
+from app.agent.custom_instructions import (
+    CUSTOM_INSTRUCTIONS_PROMPT,
+    render_custom_instructions,
+)
 from app.agent.usage import usage_metadata
 from app.config.settings import settings
 
@@ -44,7 +48,12 @@ class ScopedToolAgent:
         )
         prompt = ChatPromptTemplate.from_messages(
             [
-                ("system", system_prompt + "\n\n本轮相关长期记忆：\n{runtime_context}"),
+                (
+                    "system",
+                    system_prompt
+                    + "\n\n本轮相关长期记忆：\n{runtime_context}"
+                    + CUSTOM_INSTRUCTIONS_PROMPT,
+                ),
                 MessagesPlaceholder("chat_history", optional=True),
                 ("human", "{input}"),
                 MessagesPlaceholder("agent_scratchpad"),
@@ -64,6 +73,7 @@ class ScopedToolAgent:
         message: str,
         history: list[dict[str, str]] | None = None,
         runtime_context: str = "无",
+        custom_instructions: str = "",
     ) -> AsyncGenerator[dict, None]:
         from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -81,6 +91,7 @@ class ScopedToolAgent:
                 "input": message,
                 "chat_history": chat_history,
                 "runtime_context": runtime_context,
+                "custom_instructions": render_custom_instructions(custom_instructions),
             },
             version="v2",
         ):

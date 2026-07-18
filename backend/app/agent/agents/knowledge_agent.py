@@ -49,6 +49,7 @@ class KnowledgeAgent(ScopedToolAgent):
         message: str,
         history: list[dict[str, str]] | None = None,
         runtime_context: str = "无",
+        custom_instructions: str = "",
     ) -> AsyncGenerator[dict, None]:
         target = self._capability_target(message)
         if target:
@@ -70,6 +71,26 @@ class KnowledgeAgent(ScopedToolAgent):
                 "content": content,
             }
             payload = json.loads(content)
+            if custom_instructions:
+                capability_history = list(history or [])
+                capability_history.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "以下是本轮必须保持准确的平台运行时能力事实。请根据用户的响应偏好整理后回答，"
+                            "不得修改事实、扩大权限或重复调用 get_platform_agent_capabilities。\n"
+                            + json.dumps(payload, ensure_ascii=False)
+                        ),
+                    }
+                )
+                async for event in super().stream(
+                    message,
+                    capability_history,
+                    runtime_context,
+                    custom_instructions,
+                ):
+                    yield event
+                return
             yield {
                 "type": "text_chunk",
                 "agent": self.name,
@@ -129,5 +150,15 @@ class KnowledgeAgent(ScopedToolAgent):
                 }
             )
 
-        async for event in super().stream(message, augmented_history, runtime_context):
+        parent_stream = (
+            super().stream(
+                message,
+                augmented_history,
+                runtime_context,
+                custom_instructions,
+            )
+            if custom_instructions
+            else super().stream(message, augmented_history, runtime_context)
+        )
+        async for event in parent_stream:
             yield event

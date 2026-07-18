@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from app.config.settings import settings
+from app.agent.custom_instructions import (
+    CUSTOM_INSTRUCTIONS_PROMPT,
+    render_custom_instructions,
+)
 from app.agent.usage import usage_metadata
 from app.core.logger import get_logger
 from app.agent.tools import build_interaction_tools
@@ -156,8 +160,9 @@ class DetectionAgent:
 4. 工具完成后先给出图片数或关键帧数和检测总数，再按类别汇总；视频结果说明统计未经跨帧去重，低置信度结果提示人工复核。
 5. 管理员询问系统用户、管理员或账号列表时调用用户查询工具；普通用户无权查看全站用户目录。
 6. 没有附件时，可以回答本平台识别流程、模型能力和操作问题；不要声称已经执行检测。
-7. 输出禁止使用 emoji、颜文字或装饰性图标；直接给出结论，不要用“好的，我先……”等开场白。字段较多时可使用简洁 Markdown 表格。
-8. 若执行检测前确实需要用户选择置信度，调用 request_user_input_form，purpose 固定为 detection.parameters，并把已知阈值放入 known_values；不要自定义表单。图片、ZIP 和视频文件仍通过聊天附件上传。""",
+7. 始终禁止使用 emoji、颜文字或装饰性图标，除非用户自定义响应指令明确要求使用。未设置自定义指令时，直接给出结论，不要用“好的，我先……”等开场白；字段较多时可使用简洁 Markdown 表格。
+8. 若执行检测前确实需要用户选择置信度，调用 request_user_input_form，purpose 固定为 detection.parameters，并把已知阈值放入 known_values；不要自定义表单。图片、ZIP 和视频文件仍通过聊天附件上传。"""
+                    + CUSTOM_INSTRUCTIONS_PROMPT,
                 ),
                 MessagesPlaceholder("chat_history", optional=True),
                 ("human", "{input}"),
@@ -178,6 +183,7 @@ class DetectionAgent:
         message: str,
         attachment_paths: list[str],
         history: list[dict[str, str]] | None = None,
+        custom_instructions: str = "",
     ) -> AsyncGenerator[dict, None]:
         from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -197,7 +203,12 @@ class DetectionAgent:
 
         detection_emitted = False
         async for event in self.executor.astream_events(
-            {"input": agent_input, "chat_history": chat_history}, version="v2"
+            {
+                "input": agent_input,
+                "chat_history": chat_history,
+                "custom_instructions": render_custom_instructions(custom_instructions),
+            },
+            version="v2",
         ):
             kind = event.get("event")
             if kind == "on_tool_start":

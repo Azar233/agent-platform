@@ -85,6 +85,12 @@ class UserUpdate(ProjectBaseModel):
     email: Optional[str] = None
 
 
+class AgentCustomInstructionsUpdate(ProjectBaseModel):
+    """用户级 Agent 响应偏好。空字符串表示清除。"""
+
+    instructions: str = Field(default="", max_length=4000)
+
+
 class ChangePassword(ProjectBaseModel):
     """修改密码"""
     old_password: str = Field(..., description="旧密码")
