@@ -1,0 +1,69 @@
+import { createPinia } from 'pinia'
+import { flushPromises, mount } from '@vue/test-utils'
+import ElementPlus from 'element-plus'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import SettingsPage from '@/views/SettingsPage.vue'
+import { getAgentInstructions, updateAgentInstructions } from '@/api/user'
+
+
+vi.mock('@/api/auth', () => ({
+  getUserInfoApi: vi.fn().mockResolvedValue({
+    username: 'operator',
+    email: 'operator@example.com',
+    phone: '',
+    avatar: '',
+    roles: ['operator'],
+    created_at: '2026-01-01T00:00:00',
+    last_login_at: null,
+  }),
+}))
+
+vi.mock('@/api/user', () => ({
+  changePassword: vi.fn(),
+  getAgentInstructions: vi.fn(),
+  updateAgentInstructions: vi.fn(),
+  updateProfile: vi.fn(),
+  uploadAvatar: vi.fn(),
+}))
+
+
+describe('SettingsPage Agent 自定义指令', () => {
+  beforeEach(() => {
+    getAgentInstructions.mockReset().mockResolvedValue({
+      instructions: '始终使用中文回答',
+      max_length: 4000,
+    })
+    updateAgentInstructions.mockReset().mockImplementation(async (instructions) => ({
+      message: instructions ? 'Agent 自定义指令已更新' : 'Agent 自定义指令已清除',
+      instructions: instructions.trim(),
+      max_length: 4000,
+    }))
+  })
+
+  it('loads, edits, saves and clears the user-scoped instructions', async () => {
+    const wrapper = mount(SettingsPage, {
+      global: { plugins: [createPinia(), ElementPlus] },
+    })
+    await flushPromises()
+
+    const instructionsTab = wrapper.findAll('button').find((button) => button.text().includes('自定义指令'))
+    await instructionsTab.trigger('click')
+
+    const textarea = wrapper.get('textarea[aria-label="Agent 自定义指令"]')
+    expect(textarea.element.value).toBe('始终使用中文回答')
+    expect(textarea.attributes('maxlength')).toBe('4000')
+
+    await textarea.setValue('先给结论，再使用 Markdown 表格')
+    const save = wrapper.findAll('button').find((button) => button.text().trim() === '保存')
+    await save.trigger('click')
+    await flushPromises()
+    expect(updateAgentInstructions).toHaveBeenLastCalledWith('先给结论，再使用 Markdown 表格')
+
+    const clear = wrapper.findAll('button').find((button) => button.text().trim() === '清除指令')
+    await clear.trigger('click')
+    await flushPromises()
+    expect(updateAgentInstructions).toHaveBeenLastCalledWith('')
+    expect(textarea.element.value).toBe('')
+  })
+})

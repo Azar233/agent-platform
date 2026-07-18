@@ -333,6 +333,7 @@ async def chat_stream(
         scene_id=scene_id,
         session_uuid=session_uuid,
         context_state=context_state,
+        custom_instructions=current_user.agent_custom_instructions or "",
         detection_agent_factory=DetectionAgent,
     )
     agent_message = message
