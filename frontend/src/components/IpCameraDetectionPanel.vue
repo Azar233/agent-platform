@@ -32,10 +32,10 @@
     </div>
 
     <div class="camera-metrics">
-      <div><span>当前商品</span><strong>{{ result.object_count || 0 }}</strong></div>
+      <div><span>已扫累计</span><strong>{{ result.scan_total_objects ?? result.object_count ?? 0 }}</strong></div>
+      <div><span>画面内</span><strong>{{ result.object_count || 0 }}</strong></div>
       <div><span>处理帧率</span><strong>{{ Number(result.fps || 0).toFixed(1) }} FPS</strong></div>
       <div><span>推理耗时</span><strong>{{ Number(result.inference_time_ms || 0).toFixed(0) }} ms</strong></div>
-      <div><span>采集到画面</span><strong>{{ Number(result.pipeline_latency_ms || 0).toFixed(0) }} ms</strong></div>
     </div>
 
     <div v-if="classes.length" class="camera-classes">
@@ -46,7 +46,7 @@
     <footer class="camera-actions">
       <div>
         <span>{{ modelInfo }}</span>
-        <small>{{ runtimeInfo }} · 已处理 {{ result.frame_count || 0 }} 帧 · 主动丢弃 {{ result.dropped_frames || 0 }} 个旧帧</small>
+        <small>{{ runtimeInfo }} · 已处理 {{ result.frame_count || 0 }} 帧 · 主动丢弃 {{ result.dropped_frames || 0 }} 个旧帧 · 采集延迟 {{ Number(result.pipeline_latency_ms || 0).toFixed(0) }} ms</small>
       </div>
       <el-button v-if="!active" type="primary" :loading="loading" @click="start">开始实时检测</el-button>
       <el-button v-else type="danger" plain @click="stop">停止检测</el-button>
@@ -88,7 +88,7 @@ let pendingFrame = ''
 let renderingFrame = false
 let renderGeneration = 0
 
-const classes = computed(() => Object.entries(result.value.class_counts || {}).map(([name, count]) => ({ name, count })))
+const classes = computed(() => Object.entries(result.value.scan_class_counts || result.value.class_counts || {}).map(([name, count]) => ({ name, count })))
 
 function saveCameraUrl() {
   const value = cameraUrl.value.trim()
@@ -260,9 +260,15 @@ function stop() {
   setStatus('已停止')
 }
 
+function resetScan() {
+  // 通知后端清空累计轨迹；本地展示一并归零，等待下一帧刷新。
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'reset_scan' }))
+  result.value = {}
+}
+
 onMounted(() => { if (props.autoStart) start() })
 onBeforeUnmount(stop)
-defineExpose({ start, stop })
+defineExpose({ start, stop, resetScan })
 </script>
 
 <style lang="scss" scoped>

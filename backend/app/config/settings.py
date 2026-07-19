@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     VIDEO_MAX_KEY_FRAMES: int = 50
     VIDEO_TASK_TTL_SECONDS: int = 3600
     VIDEO_RESULT_DIR: str = "runs/detect/video-results"
+    VIDEO_TRACKING_ENABLED: bool = True
+    VIDEO_TRACKING_MAX_SECONDS: int = 120
+    VIDEO_TRACK_FRAME_STRIDE: int = 2
     MEDIA_ROOT: str = ".runtime/media"
     USER_AVATAR_MAX_FILE_MB: int = 2
 

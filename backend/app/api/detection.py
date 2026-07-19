@@ -7,6 +7,7 @@ import re
 import threading
 import time
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import torch
@@ -21,7 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.camera import configured_ip_webcam_url, normalize_ip_webcam_url
 from app.config.settings import settings
 from app.services.detection_service import DetectionServiceError, detection_service
-from app.services.realtime_stabilizer import RealtimeDetectionStabilizer
+from app.services.track_aggregator import TrackRegistry
 
 router = APIRouter(prefix="/api/detection", tags=["商品检测"])
 _CAMERA_SESSION_CLAIM_LOCK = asyncio.Lock()
@@ -247,14 +248,16 @@ def _camera_options(payload: dict) -> dict:
     }
 
 
-async def _camera_control(websocket: WebSocket, stopped: asyncio.Event) -> None:
-    """Listen for an explicit close message or a disconnected browser."""
+async def _camera_control(websocket: WebSocket, stopped: asyncio.Event, reset_scan: asyncio.Event) -> None:
+    """Listen for an explicit close/reset message or a disconnected browser."""
     try:
         while not stopped.is_set():
             message = await websocket.receive_json()
             if message.get("type") == "close":
                 stopped.set()
                 return
+            if message.get("type") == "reset_scan":
+                reset_scan.set()
     except (WebSocketDisconnect, RuntimeError):
         stopped.set()
 
@@ -309,13 +312,26 @@ async def camera_detection_ws(websocket: WebSocket):
                 "stability_min_hits": settings.CAMERA_STABILITY_MIN_HITS,
             }
         )
-        control_task = asyncio.create_task(_camera_control(websocket, stopped))
+        reset_scan = asyncio.Event()
+        control_task = asyncio.create_task(_camera_control(websocket, stopped, reset_scan))
         frame_count = 0
-        stabilizer = RealtimeDetectionStabilizer(
-            min_hits=settings.CAMERA_STABILITY_MIN_HITS,
-            max_misses=settings.CAMERA_STABILITY_MAX_MISSES,
-            iou_threshold=settings.CAMERA_STABILITY_IOU,
-        )
+        newly_confirmed: list[dict[str, Any]] = []
+
+        def _new_registry() -> TrackRegistry:
+            return TrackRegistry(
+                min_hits=settings.CAMERA_STABILITY_MIN_HITS,
+                max_misses=settings.CAMERA_STABILITY_MAX_MISSES,
+                on_track_confirmed=lambda record: newly_confirmed.append(
+                    {
+                        "track_id": record.track_id,
+                        "class_id": record.class_id,
+                        "class_name": record.class_name,
+                        "confidence": round(record.best_confidence, 4),
+                    }
+                ),
+            )
+
+        registry = _new_registry()
         previous_result_at = time.perf_counter()
         frame_interval = 1 / max(0.5, settings.CAMERA_TARGET_FPS)
         last_sequence = 0
@@ -343,8 +359,18 @@ async def camera_detection_ws(websocket: WebSocket):
                 jpeg_quality=settings.CAMERA_JPEG_QUALITY,
                 output_max_width=settings.CAMERA_OUTPUT_MAX_WIDTH,
                 finalize=False,
+                tracking=True,
             )
-            stable_detections = stabilizer.update(raw_result["detections"])
+            if reset_scan.is_set():
+                registry = _new_registry()
+                newly_confirmed.clear()
+                reset_scan.clear()
+            registry.update(sequence, time.perf_counter(), raw_result["detections"])
+            stable_detections = registry.active_tracks()
+            price_tracks = [
+                {"class_id": record.class_id, "class_name": record.class_name}
+                for record in registry.confirmed_tracks()
+            ]
             result = await run_in_threadpool(
                 detection_service.finalize_realtime_frame,
                 frame,
@@ -352,9 +378,12 @@ async def camera_detection_ws(websocket: WebSocket):
                 inference_time_ms=raw_result["inference_time_ms"],
                 jpeg_quality=settings.CAMERA_JPEG_QUALITY,
                 output_max_width=settings.CAMERA_OUTPUT_MAX_WIDTH,
+                price_detections=price_tracks,
             )
             frame_count += 1
             now = time.perf_counter()
+            confirmed_batch = list(newly_confirmed)
+            newly_confirmed.clear()
             result.update(
                 {
                     "type": "result",
@@ -365,6 +394,9 @@ async def camera_detection_ws(websocket: WebSocket):
                     "source_frame_sequence": sequence,
                     "raw_object_count": len(raw_result["detections"]),
                     "temporal_stabilized": True,
+                    "scan_total_objects": registry.total_unique,
+                    "scan_class_counts": registry.dedup_class_counts(),
+                    "new_confirmed": confirmed_batch,
                 }
             )
             previous_result_at = now
