@@ -230,16 +230,24 @@ class AgentRouter:
     @staticmethod
     def _explicit_detection_intent(message: str) -> bool:
         lowered = message.lower()
-        return any(
+        if any(
             phrase in lowered
             for phrase in (
-                "检测这张", "检测附件", "识别这张", "识别附件", "商品检测",
+                "检测这张", "检测附件", "识别这张", "识别附件", "商品检测", "检测商品", "识别商品",
                 "检测图片", "识别图片", "检测图像", "识别图像", "检测照片", "识别照片",
                 "检测图中", "识别图中", "检测下图", "识别下图",
+                "检测视频", "识别视频", "检测这段", "识别这段",
                 "批量检测", "批量识别", "检测下面", "识别下面", "开始检测", "开始识别",
+                "检测这批", "识别这批", "检测一下", "识别一下",
                 "用模型检测", "推理这张",
             )
-        )
+        ):
+            return True
+        # 动作词与附件类型之间可能隔着“这个/一下/那段”等，组合匹配兜底：
+        # “检测这个压缩包”“识别一下 zip”“检测这段视频”。
+        action_cues = ("检测", "识别", "盘点")
+        object_cues = ("视频", "压缩包", "压缩文件", "zip")
+        return any(a in lowered for a in action_cues) and any(o in lowered for o in object_cues)
 
     @staticmethod
     def _explicit_management_intent(message: str) -> RouteDecision | None:
@@ -458,29 +466,14 @@ class AgentRouter:
         preferred_agent: str | None = None,
         active_workflow_agent: str | None = None,
     ) -> RouteDecision | None:
-        """Return a decision for strong, auditable business intents, else ``None``.
+        """会话状态延续规则；领域意图（含写操作）一律交给 LLM 路由器拆分。
 
-        Write operations and dataset lifecycle flows must stay deterministic so they
-        remain auditable; everything else can be delegated to the LLM router.
+        写操作的安全由执行层的确认卡、幂等键与审计日志保障，路由层不再用
+        领域关键词截胡——关键词命中会把多意图组合压成单 Agent，使其无法并行。
+        领域关键词规则仍保留在 route() 中，仅作为 LLM 不可用时的降级兜底。
+        这里只保留数据集“添加样品”工作流的字段延续，它依赖会话上下文而非领域意图。
         """
         preferred = preferred_agent if preferred_agent in AGENT_NAMES else None
-        explicit_detection = self._explicit_detection_intent(message)
-        # 附件 + 明确检测意图意味着消息很可能是多意图组合（如“检测商品并查看数据集”），
-        # 此时任何单领域确定性规则都会吞掉其余意图，统一交给 LLM 路由器拆分。
-        defer_combo = has_attachments and explicit_detection
-
-        explicit_management = self._explicit_management_intent(message)
-        if explicit_management and not defer_combo:
-            return explicit_management
-
-        dataset_edit = self._dataset_edit_intent(message, preferred)
-        if dataset_edit and not defer_combo:
-            return dataset_edit
-
-        dataset_lifecycle = self._dataset_lifecycle_intent(message)
-        if dataset_lifecycle and not defer_combo:
-            return dataset_lifecycle
-
         if preferred == "dataset" and any(
             cue in message.lower()
             for cue in ("商品名", "商品名称", "类别名", "类别英文名", "class_name", "train_new", "train_existing")

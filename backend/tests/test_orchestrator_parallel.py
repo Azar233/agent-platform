@@ -219,13 +219,14 @@ async def test_single_agent_stream_has_no_collaboration_context(orchestrator):
 
 
 @pytest.mark.asyncio
-async def test_parallel_stream_skips_summary_on_interactive(orchestrator):
-    """Interactive cards end the turn without an LLM summary."""
+async def test_parallel_stream_summarizes_despite_interactive(orchestrator):
+    """Interactive cards stream through live, and the remaining agents' answers
+    are still summarized instead of being discarded."""
     summary_called = []
 
     async def fake_summary(drafts, structural, agents, message, history):
         summary_called.append(True)
-        yield {"type": "text_chunk", "content": "不应出现"}
+        yield {"type": "text_chunk", "content": "汇总"}
 
     orchestrator._supervisor_summary = fake_summary
 
@@ -238,9 +239,9 @@ async def test_parallel_stream_skips_summary_on_interactive(orchestrator):
     decision = RouteDecision.parallel(agents=["a", "b"], method="parallel", confidence=0.9, reason="t")
     events = [event async for event in orchestrator._parallel_stream("msg", [], [], decision)]
 
-    assert summary_called == []
+    assert summary_called == [True]
     assert any(event.get("type") == "input_form" for event in events)
-    assert not any(event.get("type") == "text_chunk" for event in events)
+    assert any(event.get("type") == "text_chunk" and event.get("content") == "汇总" for event in events)
 
 
 @pytest.mark.asyncio
@@ -496,8 +497,9 @@ async def test_supervisor_summary_handles_empty_material(orchestrator):
 
 
 @pytest.mark.asyncio
-async def test_aroute_prefers_deterministic_safety(orchestrator, monkeypatch):
-    """Deterministic write intents must win over the LLM router."""
+async def test_aroute_defers_write_intents_to_llm_then_keyword_fallback(orchestrator, monkeypatch):
+    """Write intents go to the LLM router first; the deterministic keyword chain
+    only serves as the fallback when the LLM is unavailable."""
     llm_called = []
 
     async def fake_llm_route(*args, **kwargs):
@@ -507,9 +509,10 @@ async def test_aroute_prefers_deterministic_safety(orchestrator, monkeypatch):
     monkeypatch.setattr(orchestrator.router, "route_llm", fake_llm_route)
     decision = await orchestrator.aroute("把可乐的价格改为 5 元")
 
+    # LLM 路由不可用 → 降级到 route() 的关键词兜底，仍能路由到 catalog。
+    assert llm_called == [True]
     assert decision.agent == "catalog"
     assert decision.method == "explicit_intent"
-    assert llm_called == []
 
 
 @pytest.mark.asyncio
