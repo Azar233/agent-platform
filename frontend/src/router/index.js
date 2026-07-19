@@ -29,13 +29,21 @@ const routes = [
         path: 'training',
         name: 'Training',
         component: () => import('@/views/TrainingPage.vue'),
-        meta: { title: '模型训练', icon: 'Cpu' },
+        meta: {
+          title: '模型训练',
+          icon: 'Cpu',
+          description: '启动 YOLOv11 训练任务，实时观察 loss、mAP 与运行状态。',
+        },
       },
       {
         path: 'datasets',
         name: 'Datasets',
         component: () => import('@/views/DatasetManagementPage.vue'),
-        meta: { title: '数据集版本', icon: 'Files' },
+        meta: {
+          title: '数据集版本',
+          icon: 'Files',
+          description: '登记数据集元数据和类别映射，冻结后形成不可变版本，并记录训练与模型谱系。',
+        },
       },
       {
         path: 'history',

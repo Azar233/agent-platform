@@ -3,12 +3,12 @@
     <div :class="['chat-layout', { 'sessions-collapsed': sessionsCollapsed, 'insights-collapsed': insightsCollapsed }]">
       <aside class="session-panel" :aria-hidden="sessionsCollapsed">
         <div class="sidebar-toolbar">
-          <el-button class="new-chat" type="primary" :icon="Plus" @click="createNewChat">
-            <span>新建对话</span>
-          </el-button>
           <el-tooltip content="收起历史对话" placement="right" :show-arrow="false">
             <el-button class="panel-toggle" :icon="DArrowLeft" circle aria-label="收起历史对话" @click="sessionsCollapsed = true" />
           </el-tooltip>
+          <el-button class="new-chat" type="primary" :icon="Plus" @click="createNewChat">
+            <span>新建对话</span>
+          </el-button>
         </div>
         <div class="panel-title"><span>最近对话</span><el-button text :icon="Refresh" :loading="sessionLoading" @click="loadSessions" /></div>
         <div class="session-list" v-loading="sessionLoading">
@@ -309,7 +309,17 @@ async function ensureSession() {
   agentStore.currentSessionId = session.session_uuid
   return session.session_uuid
 }
-function createNewChat() {
+async function createNewChat() {
+  // 有进行中的内容时先确认，避免误点直接打断当前对话。
+  if (agentStore.isLoading || agentStore.messages.length) {
+    try {
+      await ElMessageBox.confirm(
+        '新建对话将打断当前进行中的对话并清空当前内容，确定要继续吗？',
+        '新建对话',
+        { confirmButtonText: '新建对话', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch { return }
+  }
   stopStream(); agentStore.currentSessionId = null; agentStore.messages = []; inputText.value = ''; pendingFormSubmission.value = null; clearFiles(); newChatViewKey.value += 1
 }
 async function openSession(sessionUuid) {
