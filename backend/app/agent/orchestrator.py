@@ -109,7 +109,7 @@ class MultiAgentOrchestrator:
         preferred_agent: str | None = None,
         active_workflow_agent: str | None = None,
     ) -> RouteDecision:
-        """Async routing: deterministic safety intents → LLM router → hybrid fallback."""
+        """Async routing: session-continuation intents → LLM router → hybrid fallback."""
         decision = self.router.deterministic_safety(
             message,
             has_attachments=has_attachments,
@@ -117,6 +117,12 @@ class MultiAgentOrchestrator:
             active_workflow_agent=active_workflow_agent,
         )
         if decision:
+            logger.info(
+                "会话延续路由: agents=%s method=%s reason=%s",
+                decision.agents,
+                decision.method,
+                decision.reason,
+            )
             return decision
 
         if str(settings.AGENT_ROUTING_MODE).strip().lower() != "embedding_only":
@@ -135,12 +141,20 @@ class MultiAgentOrchestrator:
                 )
                 return llm_decision
 
-        return self.router.route(
+        fallback = self.router.route(
             message,
             has_attachments=has_attachments,
             preferred_agent=preferred_agent,
             active_workflow_agent=active_workflow_agent,
         )
+        logger.info(
+            "降级路由: agents=%s mode=%s method=%s reason=%s",
+            fallback.agents,
+            fallback.execution_mode,
+            fallback.method,
+            fallback.reason,
+        )
+        return fallback
 
     def _runtime_context(self, message: str) -> str:
         try:

@@ -432,29 +432,43 @@ async def test_route_llm_returns_none_without_api_key(monkeypatch):
     assert await AgentRouter().route_llm("你好") is None
 
 
-def test_deterministic_safety_keeps_write_ops_deterministic():
+def test_deterministic_safety_defers_domain_intents_to_llm():
+    """领域意图（含写操作）不再走第 1 关确定性规则，统一交给 LLM 路由拆分；
+    route() 中的领域关键词仅作为 LLM 不可用时的降级兜底。"""
     router = AgentRouter()
 
-    decision = router.deterministic_safety("把可乐的价格改为 5 元")
-    assert decision.agent == "catalog"
-    assert decision.method == "explicit_intent"
+    # 写操作、查询、多意图组合全部放行给 LLM。
+    assert router.deterministic_safety("把可乐的价格改为 5 元") is None
+    assert router.deterministic_safety("帮我创建新的数据集") is None
+    assert router.deterministic_safety("查看所有数据集版本") is None
+    assert router.deterministic_safety("查看训练任务情况") is None
 
-    decision = router.deterministic_safety("帮我创建新的数据集")
-    assert decision.agent == "dataset"
+    # 降级路径（LLM 不可用）仍能正确路由写操作与查询。
+    assert router.route("把可乐的价格改为 5 元").agent == "catalog"
+    assert router.route("帮我创建新的数据集").agent == "dataset"
+    assert router.route("查看所有数据集版本").agent == "dataset"
 
 
 def test_deterministic_safety_defers_attachment_detection_combo():
     router = AgentRouter()
 
-    # 附件 + 明确检测意图 + 价目意图 → 交给 LLM 决定 parallel/pipeline。
+    # 附件 + 检测/写操作组合都交给 LLM 决定 single/parallel/pipeline。
     assert (
         router.deterministic_safety("识别图片中的商品并查询它们的价格", has_attachments=True)
         is None
     )
-    # 无检测意图的附件 + 写操作仍保持确定性。
-    decision = router.deterministic_safety("把这个商品的价格改为 5 元", has_attachments=True)
-    assert decision is not None
-    assert decision.agent == "catalog"
+    assert (
+        router.deterministic_safety("把这个商品的价格改为 5 元", has_attachments=True)
+        is None
+    )
+    assert (
+        router.deterministic_safety("检测视频告知总数，查看当前的数据集情况", has_attachments=True)
+        is None
+    )
+    assert (
+        router.deterministic_safety("检测这个压缩包并查看训练任务情况", has_attachments=True)
+        is None
+    )
 
 
 def test_deterministic_safety_defers_dataset_combo_to_llm():
@@ -473,11 +487,8 @@ def test_deterministic_safety_defers_dataset_combo_to_llm():
         router.deterministic_safety("检测这张图片并添加新商品样品", has_attachments=True)
         is None
     )
-    # 纯数据集查询（无检测意图）仍保持确定性路由。
-    decision = router.deterministic_safety("查看所有数据集版本", has_attachments=True)
-    assert decision is not None
-    assert decision.agent == "dataset"
-    # 无附件的纯数据集写操作也保持确定性。
-    decision = router.deterministic_safety("归档旧的数据集版本")
-    assert decision is not None
-    assert decision.agent == "dataset"
+    # 纯数据集查询（无附件）也交给 LLM；降级路径才用关键词兜底。
+    assert router.deterministic_safety("查看所有数据集版本", has_attachments=True) is None
+    assert router.deterministic_safety("归档旧的数据集版本") is None
+    assert router.route("查看所有数据集版本", has_attachments=True).agent == "dataset"
+    assert router.route("归档旧的数据集版本").agent == "dataset"

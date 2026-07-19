@@ -496,8 +496,9 @@ async def test_supervisor_summary_handles_empty_material(orchestrator):
 
 
 @pytest.mark.asyncio
-async def test_aroute_prefers_deterministic_safety(orchestrator, monkeypatch):
-    """Deterministic write intents must win over the LLM router."""
+async def test_aroute_defers_write_intents_to_llm_then_keyword_fallback(orchestrator, monkeypatch):
+    """Write intents go to the LLM router first; the deterministic keyword chain
+    only serves as the fallback when the LLM is unavailable."""
     llm_called = []
 
     async def fake_llm_route(*args, **kwargs):
@@ -507,9 +508,10 @@ async def test_aroute_prefers_deterministic_safety(orchestrator, monkeypatch):
     monkeypatch.setattr(orchestrator.router, "route_llm", fake_llm_route)
     decision = await orchestrator.aroute("把可乐的价格改为 5 元")
 
+    # LLM 路由不可用 → 降级到 route() 的关键词兜底，仍能路由到 catalog。
+    assert llm_called == [True]
     assert decision.agent == "catalog"
     assert decision.method == "explicit_intent"
-    assert llm_called == []
 
 
 @pytest.mark.asyncio
