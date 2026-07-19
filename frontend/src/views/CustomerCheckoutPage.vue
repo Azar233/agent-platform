@@ -9,7 +9,7 @@
         <button type="button" class="history-button" @click="router.push('/checkout/history')">
           <el-icon><List /></el-icon>订单历史
         </button>
-        <div class="header-status"><i></i><span>设备就绪</span><small>原型模式</small></div>
+        <div class="header-status"><i></i><span>设备就绪</span></div>
       </div>
     </header>
 
@@ -432,21 +432,24 @@ onBeforeUnmount(() => { detectionSequence++; pricingSequence++; if (previewUrl.v
   min-height: calc(100vh - 74px);
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(390px, .65fr);
-  gap: 20px;
-  padding: 20px;
+  gap: 0;
+  padding: 0;
   background: $bg-color;
 }
 
+// 白块直接接壤，仅一条竖线分隔，不再露出灰色缝隙。
 .capture-section,
 .basket-section {
   min-width: 0;
   display: flex;
   flex-direction: column;
   background: $surface-color;
-  border: 1px solid $border-color;
-  border-radius: $border-radius-md;
-  box-shadow: $shadow-sm;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
+
+.capture-section { border-right: 1px solid $border-color; }
 
 .capture-section {
   padding: 28px 30px 32px;
@@ -913,9 +916,9 @@ onBeforeUnmount(() => { detectionSequence++; pricingSequence++; if (previewUrl.v
     grid-template-columns: 1fr;
   }
 
-  .capture-section,
-  .basket-section {
+  .capture-section {
     border-right: 0;
+    border-bottom: 1px solid $border-color;
   }
 
   .basket-section {
@@ -935,8 +938,8 @@ onBeforeUnmount(() => { detectionSequence++; pricingSequence++; if (previewUrl.v
 
   .checkout-main {
     min-height: calc(100vh - 66px);
-    padding: 16px;
-    gap: 16px;
+    padding: 0;
+    gap: 0;
   }
 
   .capture-section,

@@ -73,7 +73,11 @@ const routes = [
         path: 'prices',
         name: 'PriceManagement',
         component: () => import('@/views/PriceManagementPage.vue'),
-        meta: { title: '价目表管理', icon: 'PriceTag' },
+        meta: {
+          title: '价目表管理',
+          icon: 'PriceTag',
+          description: '选择数据集版本后，只管理该版本中已有商品的价格。',
+        },
       },
       {
         path: 'checkout/history',

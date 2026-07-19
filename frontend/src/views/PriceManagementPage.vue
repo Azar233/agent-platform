@@ -1,13 +1,5 @@
 <template>
   <div class="price-management-page">
-    <div class="page-header">
-      <div>
-        <span class="vp-kicker">Catalog Operations</span>
-        <h1 class="vp-page-title">价目表管理</h1>
-        <p class="vp-page-subtitle">选择数据集版本后，只管理该版本中已有商品的价格</p>
-      </div>
-    </div>
-
     <section class="card-container dataset-scope-panel">
       <div class="scope-copy">
         <strong><span class="required-star">*</span>数据集版本</strong>

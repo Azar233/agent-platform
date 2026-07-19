@@ -113,24 +113,21 @@ function handleCommand(command) {
 }
 
 .page-info-button {
-  width: 20px;
-  height: 20px;
+  width: 14px;
+  height: 14px;
   display: grid;
   place-items: center;
+  align-self: flex-start;
+  margin-top: 2px;
   padding: 0;
-  border: 1px solid $border-color;
-  border-radius: 50%;
+  border: 0;
   color: $text-placeholder;
   background: transparent;
   font-size: 12px;
   cursor: pointer;
-  transition: color .2s ease, border-color .2s ease, background-color .2s ease;
+  transition: color .2s ease;
 
-  &:hover {
-    color: $primary-color;
-    border-color: $primary-color;
-    background: $primary-soft;
-  }
+  &:hover { color: $primary-color; }
 }
 
 .page-info-text {

@@ -3,12 +3,12 @@
     <div :class="['chat-layout', { 'sessions-collapsed': sessionsCollapsed, 'insights-collapsed': insightsCollapsed }]">
       <aside class="session-panel" :aria-hidden="sessionsCollapsed">
         <div class="sidebar-toolbar">
-          <el-tooltip content="收起历史对话" placement="right" :show-arrow="false">
-            <el-button class="panel-toggle" :icon="DArrowLeft" circle aria-label="收起历史对话" @click="sessionsCollapsed = true" />
-          </el-tooltip>
           <el-button class="new-chat" type="primary" :icon="Plus" @click="createNewChat">
             <span>新建对话</span>
           </el-button>
+          <el-tooltip content="收起历史对话" placement="right" :show-arrow="false">
+            <el-button class="panel-toggle" :icon="DArrowLeft" circle aria-label="收起历史对话" @click="sessionsCollapsed = true" />
+          </el-tooltip>
         </div>
         <div class="panel-title"><span>最近对话</span><el-button text :icon="Refresh" :loading="sessionLoading" @click="loadSessions" /></div>
         <div class="session-list" v-loading="sessionLoading">
