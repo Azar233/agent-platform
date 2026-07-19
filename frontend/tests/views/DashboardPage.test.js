@@ -50,7 +50,32 @@ describe('DashboardPage', () => {
     expect(wrapper.findAll('.el-tabs__item')).toHaveLength(2)
     expect(getModelUsage).toHaveBeenCalledWith(30, 8)
     expect(chart.setOption.mock.calls.some(([option]) => option.legend?.orient === 'vertical')).toBe(true)
-    expect(chart.setOption.mock.calls.some(([option]) => option.series?.[0]?.center?.[0] === '34%')).toBe(true)
+    expect(chart.setOption.mock.calls.some(([option]) => option.series?.[0]?.center?.[0] === '30%')).toBe(true)
+    expect(chart.setOption.mock.calls.some(([option]) => option.series?.[0]?.showEmptyCircle === false && option.series?.[0]?.data?.length === 0)).toBe(true)
+  })
+
+  it('renders empty Agent usage without the ECharts placeholder ring', async () => {
+    getModelUsage.mockResolvedValue({
+      summary: { total_calls: 0, total_turns: 0, total_tokens: 0, avg_latency_ms: 0, success_rate: 0 },
+      trend: [],
+      agent_distribution: [],
+      recent: [],
+      granularity: 'day',
+    })
+
+    const wrapper = mount(DashboardPage, { global: { plugins: [createPinia(), ElementPlus] } })
+    await flushPromises()
+    await wrapper.findAll('.el-tabs__item')[1].trigger('click')
+    await flushPromises()
+
+    const emptyPieCall = chart.setOption.mock.calls.find(([option]) => (
+      option.legend?.show === false
+      && option.series?.[0]?.type === 'pie'
+      && option.series?.[0]?.showEmptyCircle === false
+      && option.series?.[0]?.stillShowZeroSum === false
+      && option.series?.[0]?.data?.length === 0
+    ))
+    expect(emptyPieCall).toBeTruthy()
   })
 
   it('refreshes all recognition aggregates when the one-day range is selected', async () => {

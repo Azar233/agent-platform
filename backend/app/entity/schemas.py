@@ -41,6 +41,7 @@ class UserBrief(ProjectBaseModel):
     """用户简要信息（嵌入在 Token 响应中）"""
     id: int
     username: str
+    nickname: Optional[str] = None
     email: str
     avatar: Optional[str] = None
     is_superuser: bool = False
@@ -64,6 +65,7 @@ class UserResponse(ProjectBaseModel):
     """用户详情响应"""
     id: int
     username: str
+    nickname: Optional[str] = None
     email: str
     phone: Optional[str] = None
     avatar: Optional[str] = None
@@ -80,6 +82,7 @@ class UserResponse(ProjectBaseModel):
 
 class UserUpdate(ProjectBaseModel):
     """用户信息更新"""
+    nickname: Optional[str] = Field(default=None, max_length=50)
     phone: Optional[str] = None
     avatar: Optional[str] = None
     email: Optional[str] = None
@@ -591,6 +594,26 @@ class TrainingRunImportRequest(ProjectBaseModel):
     dataset_path: Optional[str] = Field(None, description="数据集目录；默认由 data_yaml 推断")
     data_yaml: Optional[str] = Field(None, description="data.yaml 路径；默认读取 args.yaml")
     log_path: Optional[str] = Field(None, description="sbatch/训练日志路径；可选，会导入尾部日志")
+
+    model_config = {
+        "protected_namespaces": (),
+    }
+
+
+class LocalTrainingResultsImportRequest(ProjectBaseModel):
+    """Temporary import for the checked-in backend/results.csv file."""
+
+    scene_id: int = Field(..., description="Associated detection scene ID")
+    dataset_version_id: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Dataset version used by the imported training history",
+    )
+    task_uuid: Optional[str] = Field(
+        default="imported_results_csv",
+        description="Training task ID created for backend/results.csv",
+    )
+    model_name: Optional[str] = Field(default="yolov11n", description="Base model name")
 
     model_config = {
         "protected_namespaces": (),

@@ -218,16 +218,19 @@ function renderActiveCharts() {
   const pieColors = ['#0071e3', '#34c759', '#ff9f0a', '#af52de', '#5ac8fa', '#ff375f', '#64d2ff', '#bf5af2', '#8e8e93']
   const renderPies = (items) => items.forEach(([element, source, emptyText]) => {
     const chart = baseChart(element)
+    const data = source.filter((item) => Number(item.value || 0) > 0)
+    const hasData = data.length > 0
     chart?.setOption({
       color: pieColors, tooltip: { trigger: 'item', formatter: '{b}<br/>{c}（{d}%）', ...tooltip },
       legend: {
+        show: hasData,
         type: 'plain', orient: 'vertical', top: 'middle', left: '63%', right: 12,
         itemWidth: 13, itemHeight: 9, itemGap: 12,
         textStyle: { color: colors.muted, fontSize: 12, lineHeight: 17 },
       },
-      graphic: source.length ? [] : emptyGraphic(emptyText),
+      graphic: hasData ? [] : emptyGraphic(emptyText),
       // 饼图左移并稍收半径，避免右缘与图例文字重合。
-      series: [{ type: 'pie', radius: ['34%', '56%'], center: ['30%', '50%'], minAngle: 3, label: { show: false }, data: source }],
+      series: [{ type: 'pie', radius: ['34%', '56%'], center: ['30%', '50%'], minAngle: 3, label: { show: false }, showEmptyCircle: false, stillShowZeroSum: false, data }],
     }, true)
   })
 
