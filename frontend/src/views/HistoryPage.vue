@@ -82,8 +82,8 @@ onMounted(loadOverview)
 .summary-cell strong { grid-row: 1 / 3; grid-column: 2; color: $text-primary; font-size: 28px; font-weight: 650; }
 .summary-cell p { margin: 4px 0 0; overflow: hidden; color: $text-placeholder; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .history-workspace { position: relative; min-width: 0; }
-// 刷新按钮：透明文字钮，锚定在灰条右上角，与 tab 头同行。
-.tabs-refresh { position: absolute; top: 9px; right: 12px; z-index: 5; color: $text-secondary; }
+// 刷新按钮：透明文字钮，锚定在灰条右端内部（卡片内边距 24px + 灰条内缩），与 tab 头同高。
+.tabs-refresh { position: absolute; top: 33px; right: 30px; z-index: 5; color: $text-secondary; }
 .tabs-refresh:hover, .tabs-refresh:focus-visible { color: $primary-color; }
 .history-tabs :deep(.el-tabs__header) { margin: 0 0 12px; padding: 5px; border: 1px solid $border-color; border-radius: 14px; background: $surface-muted; }
 .history-tabs :deep(.el-tabs__nav-wrap::after), .history-tabs :deep(.el-tabs__active-bar) { display: none; }

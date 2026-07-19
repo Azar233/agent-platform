@@ -959,7 +959,7 @@ function stopStream() { agentStore.abort(); const last = agentStore.messages.at(
   gap: 2px;
   padding: 3px;
   border: 1px solid $border-color;
-  border-radius: 999px;
+  border-radius: $border-radius-md;
   color: $text-secondary;
   background: rgba($surface-color, .92);
   box-shadow: $shadow-md;
