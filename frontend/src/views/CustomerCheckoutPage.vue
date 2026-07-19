@@ -432,24 +432,22 @@ onBeforeUnmount(() => { detectionSequence++; pricingSequence++; if (previewUrl.v
   min-height: calc(100vh - 74px);
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(390px, .65fr);
-  gap: 0;
-  padding: 0;
+  // 保留一条窄灰缝，避免白块之间隔得太远。
+  gap: 12px;
+  padding: 12px;
   background: $bg-color;
 }
 
-// 白块直接接壤，仅一条竖线分隔，不再露出灰色缝隙。
 .capture-section,
 .basket-section {
   min-width: 0;
   display: flex;
   flex-direction: column;
   background: $surface-color;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  border: 1px solid $border-color;
+  border-radius: $border-radius-md;
+  box-shadow: $shadow-sm;
 }
-
-.capture-section { border-right: 1px solid $border-color; }
 
 .capture-section {
   padding: 28px 30px 32px;
@@ -916,11 +914,6 @@ onBeforeUnmount(() => { detectionSequence++; pricingSequence++; if (previewUrl.v
     grid-template-columns: 1fr;
   }
 
-  .capture-section {
-    border-right: 0;
-    border-bottom: 1px solid $border-color;
-  }
-
   .basket-section {
     min-height: 620px;
   }
@@ -938,8 +931,8 @@ onBeforeUnmount(() => { detectionSequence++; pricingSequence++; if (previewUrl.v
 
   .checkout-main {
     min-height: calc(100vh - 66px);
-    padding: 0;
-    gap: 0;
+    padding: 10px;
+    gap: 10px;
   }
 
   .capture-section,

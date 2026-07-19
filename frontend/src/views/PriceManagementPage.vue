@@ -55,7 +55,7 @@
             v-model="searchKeyword"
             placeholder="搜索商品名、条码、product_id 或 product_key"
             clearable
-            style="width: 380px; max-width: 100%"
+            style="width: 540px; max-width: 100%"
             @keyup.enter="handleSearch"
             @clear="handleSearch"
           >
@@ -83,7 +83,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="class_index" label="class_id" sortable="custom" min-width="100">
+          <el-table-column prop="class_index" label="class_id" sortable="custom" min-width="120">
             <template #default="{ row }">{{ row.class_index }}</template>
           </el-table-column>
           <el-table-column prop="product_id" label="product_id" min-width="110" />

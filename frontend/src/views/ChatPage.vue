@@ -30,11 +30,11 @@
       <main :class="['conversation-panel', { 'has-floating-controls': sessionsCollapsed || insightsCollapsed }]">
         <div v-if="sessionsCollapsed || insightsCollapsed" class="floating-panel-controls" aria-label="侧栏快捷操作">
           <div v-if="sessionsCollapsed" class="floating-control-capsule floating-control-capsule--left">
+            <el-button class="floating-control-button" text :icon="Plus" aria-label="新建对话" @click="createNewChat" />
+            <span class="floating-control-divider" aria-hidden="true"></span>
             <el-tooltip content="展开历史对话" placement="bottom" :show-arrow="false">
               <el-button class="floating-control-button" text :icon="DArrowRight" aria-label="展开历史对话" @click="sessionsCollapsed = false" />
             </el-tooltip>
-            <span class="floating-control-divider" aria-hidden="true"></span>
-            <el-button class="floating-control-button" text :icon="Plus" aria-label="新建对话" @click="createNewChat" />
           </div>
           <div v-if="insightsCollapsed" class="floating-control-capsule floating-control-capsule--right">
             <el-tooltip content="展开右侧设置" placement="bottom" :show-arrow="false">

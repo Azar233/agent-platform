@@ -8,8 +8,7 @@
     </section>
 
     <section class="history-workspace card-container">
-      <div class="tabs-strip">
-        <el-tabs v-model="activeTab" class="history-tabs" @tab-change="handleTabChange">
+      <el-tabs v-model="activeTab" class="history-tabs" @tab-change="handleTabChange">
           <el-tab-pane name="detection">
             <template #label><span class="tab-label"><el-icon><View /></el-icon><span>识别记录</span><small>{{ overview.detection_tasks }}</small></span></template>
             <DetectionHistoryPanel ref="detectionPanel" @changed="loadOverview" />
@@ -22,11 +21,10 @@
             <template #label><span class="tab-label"><el-icon><Cpu /></el-icon><span>模型历史</span><small>{{ overview.models }}</small></span></template>
             <ModelHistoryPanel v-if="loadedTabs.model" ref="modelPanel" />
           </el-tab-pane>
-        </el-tabs>
-        <el-tooltip content="刷新当前记录" placement="left" :show-arrow="false">
-          <el-button class="tabs-refresh" :icon="Refresh" circle :loading="refreshing" aria-label="刷新当前记录" @click="refreshCurrent" />
-        </el-tooltip>
-      </div>
+      </el-tabs>
+      <el-tooltip content="刷新当前记录" placement="left" :show-arrow="false">
+        <el-button class="tabs-refresh" text :icon="Refresh" :loading="refreshing" aria-label="刷新当前记录" @click="refreshCurrent" />
+      </el-tooltip>
     </section>
   </div>
 </template>
@@ -80,15 +78,14 @@ onMounted(loadOverview)
 .summary-strip .model > span { color: $info-color; background: var(--vp-info-bg); }
 .summary-strip .coverage > span { color: $success-color; background: var(--vp-success-bg); }
 .summary-cell div { min-width: 0; display: grid; grid-template-columns: 1fr auto; align-items: baseline; }
-.summary-cell small { color: $text-secondary; font-size: 13px; font-weight: 700; }
+.summary-cell small { color: $text-primary; font-size: 15px; font-weight: 700; }
 .summary-cell strong { grid-row: 1 / 3; grid-column: 2; color: $text-primary; font-size: 28px; font-weight: 650; }
 .summary-cell p { margin: 4px 0 0; overflow: hidden; color: $text-placeholder; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.history-workspace { min-width: 0; }
-// 灰条：tabs 与刷新按钮同处一条。
-.tabs-strip { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 5px; border: 1px solid $border-color; border-radius: 14px; background: $surface-muted; }
-.tabs-strip .history-tabs { flex: 1; min-width: 0; }
-.tabs-strip .history-tabs :deep(.el-tabs__header) { margin: 0; border: 0; background: transparent; }
-.tabs-refresh { flex: 0 0 auto; }
+.history-workspace { position: relative; min-width: 0; }
+// 刷新按钮：透明文字钮，锚定在灰条右上角，与 tab 头同行。
+.tabs-refresh { position: absolute; top: 9px; right: 12px; z-index: 5; color: $text-secondary; }
+.tabs-refresh:hover, .tabs-refresh:focus-visible { color: $primary-color; }
+.history-tabs :deep(.el-tabs__header) { margin: 0 0 12px; padding: 5px; border: 1px solid $border-color; border-radius: 14px; background: $surface-muted; }
 .history-tabs :deep(.el-tabs__nav-wrap::after), .history-tabs :deep(.el-tabs__active-bar) { display: none; }
 .history-tabs :deep(.el-tabs__item) { height: 42px; padding: 0 7px; color: $text-secondary; }
 .history-tabs :deep(.el-tabs__item.is-active) { color: $text-primary; }

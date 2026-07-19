@@ -1,8 +1,7 @@
 <template>
   <div class="dashboard-page" v-loading="loading">
     <section class="dashboard-workspace">
-      <div class="tabs-strip">
-        <el-tabs v-model="activeSection" class="dashboard-tabs" @tab-change="handleSectionChange">
+      <el-tabs v-model="activeSection" class="dashboard-tabs" @tab-change="handleSectionChange">
         <el-tab-pane name="detection">
           <template #label>
             <span class="tab-label"><el-icon><View /></el-icon><span>识别概览</span><small>{{ formatNumber(stats.total_tasks) }}</small></span>
@@ -89,10 +88,9 @@
           </div>
         </el-tab-pane>
       </el-tabs>
-        <el-tooltip content="刷新当前概览" placement="left" :show-arrow="false">
-          <el-button class="tabs-refresh" :icon="Refresh" circle :loading="loading" aria-label="刷新当前概览" @click="refreshCurrent" />
-        </el-tooltip>
-      </div>
+      <el-tooltip content="刷新当前概览" placement="left" :show-arrow="false">
+        <el-button class="tabs-refresh" text :icon="Refresh" :loading="loading" aria-label="刷新当前概览" @click="refreshCurrent" />
+      </el-tooltip>
     </section>
   </div>
 </template>
@@ -339,11 +337,10 @@ onBeforeUnmount(() => {
 
 <style lang="scss" scoped>
 .dashboard-page { min-height: 100%; padding: 24px; display: flex; flex-direction: column; gap: 18px; color: $text-primary; background: $bg-color; }
-.tabs-strip { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 5px; border: 1px solid $border-color; border-radius: 14px; background: $surface-muted; }
-.tabs-strip .dashboard-tabs { flex: 1; min-width: 0; }
-.tabs-strip .dashboard-tabs :deep(.el-tabs__header) { margin: 0; border: 0; background: transparent; }
-.tabs-refresh { flex: 0 0 auto; }
-.dashboard-workspace { min-width: 0; }.dashboard-tabs :deep(.el-tabs__header) { margin: 0 0 16px; padding: 5px; border: 1px solid $border-color; border-radius: 14px; background: $surface-muted; }.dashboard-tabs :deep(.el-tabs__nav-wrap::after),.dashboard-tabs :deep(.el-tabs__active-bar) { display: none; }.dashboard-tabs :deep(.el-tabs__item) { height: 42px; padding: 0 7px; color: $text-secondary; }.dashboard-tabs :deep(.el-tabs__item.is-active) { color: $text-primary; }.tab-label { height: 34px; padding: 0 13px; display: inline-flex; align-items: center; gap: 7px; border-radius: 10px; transition: .2s ease; }.dashboard-tabs :deep(.is-active) .tab-label { color: $primary-color; background: $surface-color; box-shadow: 0 5px 14px rgba(15,23,42,.07); }.tab-label small { min-width: 20px; padding: 2px 6px; border-radius: 999px; color: $text-placeholder; background: color-mix(in srgb,$border-color 60%,transparent); font-size: 9px; text-align: center; }.dashboard-tabs :deep(.is-active) .tab-label small { color: $primary-color; background: $primary-soft; }
+.dashboard-workspace { position: relative; min-width: 0; }
+.tabs-refresh { position: absolute; top: 9px; right: 12px; z-index: 5; color: $text-secondary; }
+.tabs-refresh:hover, .tabs-refresh:focus-visible { color: $primary-color; }
+.dashboard-tabs :deep(.el-tabs__header) { margin: 0 0 16px; padding: 5px; border: 1px solid $border-color; border-radius: 14px; background: $surface-muted; }.dashboard-tabs :deep(.el-tabs__nav-wrap::after),.dashboard-tabs :deep(.el-tabs__active-bar) { display: none; }.dashboard-tabs :deep(.el-tabs__item) { height: 42px; padding: 0 7px; color: $text-secondary; }.dashboard-tabs :deep(.el-tabs__item.is-active) { color: $text-primary; }.tab-label { height: 34px; padding: 0 13px; display: inline-flex; align-items: center; gap: 7px; border-radius: 10px; transition: .2s ease; }.dashboard-tabs :deep(.is-active) .tab-label { color: $primary-color; background: $surface-color; box-shadow: 0 5px 14px rgba(15,23,42,.07); }.tab-label small { min-width: 20px; padding: 2px 6px; border-radius: 999px; color: $text-placeholder; background: color-mix(in srgb,$border-color 60%,transparent); font-size: 9px; text-align: center; }.dashboard-tabs :deep(.is-active) .tab-label small { color: $primary-color; background: $primary-soft; }
 .dashboard-pane { display: flex; flex-direction: column; gap: 16px; }.pane-toolbar { min-height: 54px; padding: 2px 2px 8px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }.pane-toolbar > div:first-child { display: flex; flex-direction: column; gap: 4px; }.pane-toolbar strong { font-size: 17px; }.pane-toolbar small { color: $text-secondary; font-size: 12px; }
 .period-switch { max-width: 100%; padding: 3px; display: inline-flex !important; flex: none; flex-direction: row !important; align-items: center; gap: 2px !important; overflow-x: auto; border: 1px solid $border-color; border-radius: 12px; background: $surface-muted; white-space: nowrap; scrollbar-width: none; }.period-switch::-webkit-scrollbar { display: none; }.period-switch button { height: 30px; padding: 0 12px; flex: none; border: 0; border-radius: 9px; color: $text-secondary; background: transparent; font: inherit; font-size: 12px; cursor: pointer; transition: color .18s ease, background .18s ease, box-shadow .18s ease; }.period-switch button:hover { color: $text-primary; }.period-switch button.active { color: $primary-color; background: $surface-color; box-shadow: 0 3px 10px rgba(15,23,42,.08); font-weight: 650; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
