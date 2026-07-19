@@ -752,8 +752,9 @@ function stopStream() { agentStore.abort(); const last = agentStore.messages.at(
 }
 
 .insight-content section + section {
-  margin-top: 18px;
-  padding-top: 14px;
+  // 收紧右侧面板纵向间距，多数窗口高度下不再出现面板内滚动条。
+  margin-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid $border-color;
 }
 
@@ -911,7 +912,7 @@ function stopStream() { agentStore.abort(); const last = agentStore.messages.at(
 .safety-card {
   display: flex;
   gap: 10px;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid $border-color;
   border-radius: 10px;
   color: $text-primary;
@@ -975,7 +976,8 @@ function stopStream() { agentStore.abort(); const last = agentStore.messages.at(
   min-width: 30px;
   height: 30px;
   margin: 0;
-  border-radius: 50%;
+  // 与外层圆角矩形胶囊保持一致的圆角预览。
+  border-radius: $border-radius-sm;
   color: inherit;
   border-color: transparent;
   background: transparent;

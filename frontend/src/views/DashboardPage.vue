@@ -9,8 +9,13 @@
           <div class="dashboard-pane">
             <div class="pane-toolbar">
               <div><strong>识别数据概览</strong><small>识别任务、处理规模与商品分布</small></div>
-              <div class="period-switch" role="group" aria-label="识别概览时间范围">
-                <button v-for="option in periodOptions" :key="option.value" type="button" :class="{ active: detectionPeriodDays === option.value }" @click="selectDetectionPeriod(option.value)">{{ option.label }}</button>
+              <div class="pane-actions">
+                <el-tooltip content="刷新当前概览" placement="left" :show-arrow="false">
+                  <el-button class="pane-refresh" text :icon="Refresh" :loading="loading" aria-label="刷新当前概览" @click="refreshCurrent" />
+                </el-tooltip>
+                <div class="period-switch" role="group" aria-label="识别概览时间范围">
+                  <button v-for="option in periodOptions" :key="option.value" type="button" :class="{ active: detectionPeriodDays === option.value }" @click="selectDetectionPeriod(option.value)">{{ option.label }}</button>
+                </div>
               </div>
             </div>
 
@@ -48,8 +53,13 @@
           <div class="dashboard-pane">
             <div class="pane-toolbar">
               <div><strong>模型调用概览</strong><small>大模型请求、Token 与 Agent 使用情况</small></div>
-              <div class="period-switch" role="group" aria-label="模型调用时间范围">
-                <button v-for="option in periodOptions" :key="option.value" type="button" :class="{ active: modelPeriodDays === option.value }" @click="selectModelPeriod(option.value)">{{ option.label }}</button>
+              <div class="pane-actions">
+                <el-tooltip content="刷新当前概览" placement="left" :show-arrow="false">
+                  <el-button class="pane-refresh" text :icon="Refresh" :loading="loading" aria-label="刷新当前概览" @click="refreshCurrent" />
+                </el-tooltip>
+                <div class="period-switch" role="group" aria-label="模型调用时间范围">
+                  <button v-for="option in periodOptions" :key="option.value" type="button" :class="{ active: modelPeriodDays === option.value }" @click="selectModelPeriod(option.value)">{{ option.label }}</button>
+                </div>
               </div>
             </div>
 
@@ -88,9 +98,6 @@
           </div>
         </el-tab-pane>
       </el-tabs>
-      <el-tooltip content="刷新当前概览" placement="left" :show-arrow="false">
-        <el-button class="tabs-refresh" text :icon="Refresh" :loading="loading" aria-label="刷新当前概览" @click="refreshCurrent" />
-      </el-tooltip>
     </section>
   </div>
 </template>
@@ -338,8 +345,9 @@ onBeforeUnmount(() => {
 <style lang="scss" scoped>
 .dashboard-page { min-height: 100%; padding: 24px; display: flex; flex-direction: column; gap: 18px; color: $text-primary; background: $bg-color; }
 .dashboard-workspace { position: relative; min-width: 0; }
-.tabs-refresh { position: absolute; top: 33px; right: 30px; z-index: 5; color: $text-secondary; }
-.tabs-refresh:hover, .tabs-refresh:focus-visible { color: $primary-color; }
+.pane-actions { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.pane-refresh { color: $text-secondary; }
+.pane-refresh:hover, .pane-refresh:focus-visible { color: $primary-color; }
 // 灰条收窄为内容宽度，给图表让出横向空间。
 .dashboard-tabs :deep(.el-tabs__header) { width: fit-content; margin: 0 0 16px; padding: 5px; border: 1px solid $border-color; border-radius: 14px; background: $surface-muted; }.dashboard-tabs :deep(.el-tabs__nav-wrap::after),.dashboard-tabs :deep(.el-tabs__active-bar) { display: none; }.dashboard-tabs :deep(.el-tabs__item) { height: 42px; padding: 0 7px; color: $text-secondary; }.dashboard-tabs :deep(.el-tabs__item.is-active) { color: $text-primary; }.tab-label { height: 34px; padding: 0 13px; display: inline-flex; align-items: center; gap: 7px; border-radius: 10px; transition: .2s ease; }.dashboard-tabs :deep(.is-active) .tab-label { color: $primary-color; background: $surface-color; box-shadow: 0 5px 14px rgba(15,23,42,.07); }.tab-label small { min-width: 20px; padding: 2px 6px; border-radius: 999px; color: $text-placeholder; background: color-mix(in srgb,$border-color 60%,transparent); font-size: 9px; text-align: center; }.dashboard-tabs :deep(.is-active) .tab-label small { color: $primary-color; background: $primary-soft; }
 .dashboard-pane { display: flex; flex-direction: column; gap: 16px; }.pane-toolbar { min-height: 54px; padding: 2px 2px 8px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }.pane-toolbar > div:first-child { display: flex; flex-direction: column; gap: 4px; }.pane-toolbar strong { font-size: 17px; }.pane-toolbar small { color: $text-secondary; font-size: 12px; }
