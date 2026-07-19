@@ -15,10 +15,13 @@ ALLOWED_STREAM_PATHS = {"/video", "/videofeed"}
 
 
 def normalize_ip_webcam_url(raw_url: str) -> str:
-    """Validate a LAN IP Webcam URL and return its direct MJPEG endpoint."""
+    """Validate a LAN or loopback IP Webcam URL and return its direct MJPEG endpoint."""
     try:
         parsed = urlsplit(raw_url.strip())
-        address = ipaddress.ip_address(parsed.hostname or "")
+        hostname = parsed.hostname or ""
+        if hostname.lower() == "localhost":
+            hostname = "127.0.0.1"
+        address = ipaddress.ip_address(hostname)
         port = parsed.port
     except (ValueError, TypeError) as exc:
         raise ValueError("请输入有效的局域网 IP Webcam 地址") from exc
