@@ -32,8 +32,8 @@
     </div>
 
     <div class="camera-metrics">
-      <div><span>已扫累计</span><strong>{{ result.scan_total_objects ?? result.object_count ?? 0 }}</strong></div>
-      <div><span>画面内</span><strong>{{ result.object_count || 0 }}</strong></div>
+      <div><span>{{ accumulate ? '已扫累计' : '当前商品' }}</span><strong>{{ accumulate ? (result.scan_total_objects ?? 0) : (result.object_count || 0) }}</strong></div>
+      <div><span>{{ accumulate ? '画面内' : '采集到画面' }}</span><strong>{{ accumulate ? (result.object_count || 0) : Number(result.pipeline_latency_ms || 0).toFixed(0) + ' ms' }}</strong></div>
       <div><span>处理帧率</span><strong>{{ Number(result.fps || 0).toFixed(1) }} FPS</strong></div>
       <div><span>推理耗时</span><strong>{{ Number(result.inference_time_ms || 0).toFixed(0) }} ms</strong></div>
     </div>
@@ -46,17 +46,22 @@
     <footer class="camera-actions">
       <div>
         <span>{{ modelInfo }}</span>
-        <small>{{ runtimeInfo }} · 已处理 {{ result.frame_count || 0 }} 帧 · 主动丢弃 {{ result.dropped_frames || 0 }} 个旧帧 · 采集延迟 {{ Number(result.pipeline_latency_ms || 0).toFixed(0) }} ms</small>
+        <small>{{ runtimeInfo }} · 已处理 {{ result.frame_count || 0 }} 帧 · 主动丢弃 {{ result.dropped_frames || 0 }} 个旧帧</small>
       </div>
-      <el-button v-if="!active" type="primary" :loading="loading" @click="start">开始实时检测</el-button>
-      <el-button v-else type="danger" plain @click="stop">停止检测</el-button>
+      <div class="action-group">
+        <button type="button" :class="['mode-toggle', { active: accumulate }]" :disabled="active" @click="accumulate = !accumulate" :title="accumulate ? '当前为累计模式，切换为瞬时模式' : '当前为瞬时模式，切换为累计模式'">
+          <el-icon><Sort /></el-icon><span>{{ accumulate ? '累计' : '瞬时' }}</span>
+        </button>
+        <el-button v-if="!active" type="primary" :loading="loading" @click="start">开始实时检测</el-button>
+        <el-button v-else type="danger" plain @click="stop">停止检测</el-button>
+      </div>
     </footer>
   </section>
 </template>
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { VideoCamera } from '@element-plus/icons-vue'
+import { Sort, VideoCamera } from '@element-plus/icons-vue'
 
 const props = defineProps({
   sceneId: { type: Number, default: undefined },
@@ -67,6 +72,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['result', 'status'])
 
+const accumulate = ref(true)
 const canvasRef = ref(null)
 const active = ref(false)
 const running = ref(false)
@@ -88,7 +94,7 @@ let pendingFrame = ''
 let renderingFrame = false
 let renderGeneration = 0
 
-const classes = computed(() => Object.entries(result.value.scan_class_counts || result.value.class_counts || {}).map(([name, count]) => ({ name, count })))
+const classes = computed(() => Object.entries((accumulate.value ? result.value.scan_class_counts : result.value.class_counts) || {}).map(([name, count]) => ({ name, count })))
 
 function saveCameraUrl() {
   const value = cameraUrl.value.trim()
@@ -166,6 +172,7 @@ function connect() {
       iou: props.iou,
       scene_id: props.sceneId || null,
       camera_url: cameraUrl.value.trim(),
+      accumulate: accumulate.value,
     }))
   }
   socket.onmessage = async (event) => {
@@ -176,11 +183,12 @@ function connect() {
       loading.value = false
       running.value = true
       modelInfo.value = `${message.model} · ${message.scene}`
-      runtimeInfo.value = `${message.image_size} × ${message.image_size} · 目标 ${Number(message.target_fps).toFixed(1)} FPS · 跨帧稳定`
+      runtimeInfo.value = `${message.image_size} × ${message.image_size} · 目标 ${Number(message.target_fps).toFixed(1)} FPS · ${accumulate.value ? '累计计数' : '瞬时计数'}`
       setStatus('实时识别中')
       return
     }
     if (message.type === 'result') {
+      message.accumulate = accumulate.value
       result.value = message
       await nextTick()
       renderLatestFrame(message.annotated_frame)
@@ -483,6 +491,42 @@ defineExpose({ start, stop, resetScan })
     color: $text-secondary;
     font-size: 9px;
   }
+}
+
+.camera-actions .action-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid $border-color;
+  border-radius: 4px;
+  background: $surface-color;
+  color: $text-secondary;
+  font-size: 12px;
+  cursor: pointer;
+  transition: .2s;
+}
+
+.mode-toggle.active {
+  border-color: $primary-color;
+  color: $primary-color;
+  background: var(--vp-primary-bg);
+}
+
+.mode-toggle:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.mode-toggle .el-icon {
+  font-size: 14px;
 }
 
 .compact {

@@ -189,7 +189,17 @@ function applyRealtimeDetection(result) {
   const item = { filename: 'IP Webcam 当前帧', detections: result.detections || [] }
   detectionResult.value = { source: 'camera', items: [item] }
   activeModelVersionId.value = result.model_version_id || null
-  // 记录各类别近期置信度，商品离开画面后仍能展示最后已知值。
+  if (!result.accumulate) {
+    // 瞬时模式：每帧覆盖购物车，只保留当前画面物品。
+    manualDeltas.value = {}
+    removedClasses.value = new Set()
+    Object.keys(confidenceMemory).forEach((key) => delete confidenceMemory[key])
+    checkoutSummary.value = result.price_summary
+    products.value = productsFromDetection(item.detections, result.price_summary)
+    detectionError.value = ''
+    return
+  }
+  // 累计模式：服务端扫描计数为基准，手动调整以增量叠加，移除的类别在重置前隐藏。
   for (const detection of item.detections) {
     const values = confidenceMemory[detection.class_id] || (confidenceMemory[detection.class_id] = [])
     values.push(Number(detection.confidence || 0))
@@ -209,7 +219,6 @@ function applyRealtimeDetection(result) {
   }
   products.value = nextProducts
   if (adjusted) {
-    // 有手动调整时服务端汇总不再等于购物车，仅在计数变化时重算，避免每帧打 HTTP。
     if ((result.new_confirmed || []).length || !checkoutSummary.value) recalculateCart()
   } else {
     checkoutSummary.value = scanSummary

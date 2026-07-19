@@ -46,6 +46,7 @@ def test_camera_options_validate_mode_and_bounds(monkeypatch):
         "iou": 0.5,
         "scene_id": 2,
         "camera_url": None,
+        "accumulate": True,
         "warning": None,
     }
     assert _camera_options({"conf": 0.3, "iou": 0.5})["mode"] == "cpu"
@@ -218,7 +219,67 @@ def test_camera_websocket_returns_annotated_current_frame(client, monkeypatch):
         websocket.send_json({"type": "close"})
 
 
-def test_camera_websocket_accumulates_confirmed_tracks(client, monkeypatch):
+def test_camera_websocket_instant_mode_pricing(client, monkeypatch):
+    import cv2
+    from app.api import detection as detection_api
+
+    class FakeCapture:
+        def isOpened(self):
+            return True
+
+        def set(self, *_args):
+            return True
+
+        def read(self):
+            return True, object()
+
+        def release(self):
+            return None
+
+    finalize_calls: list = []
+
+    def fake_finalize(*_args, **_kwargs):
+        finalize_calls.append(_kwargs.get("price_detections"))
+        return {
+            "annotated_frame": "ZmFrZQ==",
+            "detections": [],
+            "object_count": 0,
+            "class_counts": {},
+            "inference_time_ms": 12.5,
+            "price_summary": {"total_price": 0, "items": []},
+        }
+
+    monkeypatch.setattr(detection_api, "configured_ip_webcam_url", lambda: "http://192.168.1.109:8080/video")
+    monkeypatch.setattr(cv2, "VideoCapture", lambda *_args: FakeCapture())
+    monkeypatch.setattr(
+        detection_api.detection_service,
+        "prepare_realtime_model",
+        lambda **_kwargs: {"model": object(), "model_name": "best.pt", "scene": "Vision Pay"},
+    )
+    monkeypatch.setattr(
+        detection_api.detection_service,
+        "detect_realtime_frame",
+        lambda *_args, **_kwargs: {"detections": [], "inference_time_ms": 12.5},
+    )
+    monkeypatch.setattr(
+        detection_api.detection_service,
+        "finalize_realtime_frame",
+        fake_finalize,
+    )
+
+    with client.websocket_connect(
+        "/api/detection/camera",
+        headers={"origin": "http://localhost:5173"},
+    ) as websocket:
+        websocket.send_json({"type": "config", "mode": "cpu", "accumulate": False})
+        configured = websocket.receive_json()
+        assert configured["type"] == "config_ok"
+        assert configured["accumulate"] is False
+        result = websocket.receive_json()
+        assert result["type"] == "result"
+        # 瞬时模式计价应基于当前帧，不传入累计轨迹列表
+        assert finalize_calls[-1] is None
+        websocket.send_json({"type": "close"})
     import cv2
     from app.api import detection as detection_api
 

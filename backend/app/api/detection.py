@@ -233,6 +233,11 @@ def _camera_options(payload: dict) -> dict:
         scene_id = int(scene_id)
         if scene_id < 1:
             raise ValueError("scene_id 必须为正整数")
+    accumulate = payload.get("accumulate")
+    if accumulate is None:
+        accumulate = True
+    elif not isinstance(accumulate, bool):
+        accumulate = str(accumulate).lower() in ("true", "1", "yes", "on")
     camera_url = str(payload.get("camera_url") or "").strip()
     if camera_url:
         camera_url = normalize_ip_webcam_url(camera_url)
@@ -244,6 +249,7 @@ def _camera_options(payload: dict) -> dict:
         "iou": iou,
         "scene_id": scene_id,
         "camera_url": camera_url,
+        "accumulate": accumulate,
         "warning": warning,
     }
 
@@ -310,6 +316,7 @@ async def camera_detection_ws(websocket: WebSocket):
                 "session_id": session["id"],
                 "temporal_stabilization": True,
                 "stability_min_hits": settings.CAMERA_STABILITY_MIN_HITS,
+                "accumulate": options["accumulate"],
             }
         )
         reset_scan = asyncio.Event()
@@ -367,10 +374,13 @@ async def camera_detection_ws(websocket: WebSocket):
                 reset_scan.clear()
             registry.update(sequence, time.perf_counter(), raw_result["detections"])
             stable_detections = registry.active_tracks()
-            price_tracks = [
-                {"class_id": record.class_id, "class_name": record.class_name}
-                for record in registry.confirmed_tracks()
-            ]
+            accumulate = options["accumulate"]
+            price_detections = None
+            if accumulate:
+                price_detections = [
+                    {"class_id": record.class_id, "class_name": record.class_name}
+                    for record in registry.confirmed_tracks()
+                ]
             result = await run_in_threadpool(
                 detection_service.finalize_realtime_frame,
                 frame,
@@ -378,7 +388,7 @@ async def camera_detection_ws(websocket: WebSocket):
                 inference_time_ms=raw_result["inference_time_ms"],
                 jpeg_quality=settings.CAMERA_JPEG_QUALITY,
                 output_max_width=settings.CAMERA_OUTPUT_MAX_WIDTH,
-                price_detections=price_tracks,
+                price_detections=price_detections,
             )
             frame_count += 1
             now = time.perf_counter()
