@@ -50,7 +50,7 @@
       </div>
       <div class="action-group">
         <button type="button" :class="['mode-toggle', { active: accumulate }]" :disabled="active" @click="accumulate = !accumulate" :title="accumulate ? '当前为累计模式，切换为瞬时模式' : '当前为瞬时模式，切换为累计模式'">
-          <el-icon><Sort /></el-icon><span>{{ accumulate ? '累计' : '瞬时' }}</span>
+          {{ accumulate ? '累计模式' : '瞬时模式' }}
         </button>
         <el-button v-if="!active" type="primary" :loading="loading" @click="start">开始实时检测</el-button>
         <el-button v-else type="danger" plain @click="stop">停止检测</el-button>
@@ -61,7 +61,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Sort, VideoCamera } from '@element-plus/icons-vue'
+import { VideoCamera } from '@element-plus/icons-vue'
 
 const props = defineProps({
   sceneId: { type: Number, default: undefined },
@@ -495,14 +495,20 @@ defineExpose({ start, stop, resetScan })
 
 .camera-actions .action-group {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
+}
+
+.camera-actions .action-group .el-button {
+  flex-shrink: 0;
 }
 
 .mode-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
   height: 32px;
   padding: 0 12px;
   border: 1px solid $border-color;
@@ -512,6 +518,7 @@ defineExpose({ start, stop, resetScan })
   font-size: 12px;
   cursor: pointer;
   transition: .2s;
+  white-space: nowrap;
 }
 
 .mode-toggle.active {
@@ -523,10 +530,6 @@ defineExpose({ start, stop, resetScan })
 .mode-toggle:disabled {
   opacity: .6;
   cursor: not-allowed;
-}
-
-.mode-toggle .el-icon {
-  font-size: 14px;
 }
 
 .compact {
