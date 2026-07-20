@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     VIDEO_TRACKING_ENABLED: bool = True
     VIDEO_TRACKING_MAX_SECONDS: int = 120
     VIDEO_TRACK_FRAME_STRIDE: int = 2
+    VIDEO_TRACK_MAX_FPS: float = 15.0
+    VIDEO_TRACK_CAMERA_ACTIVE_MAX_FPS: float = 5.0
     MEDIA_ROOT: str = ".runtime/media"
     USER_AVATAR_MAX_FILE_MB: int = 2
 

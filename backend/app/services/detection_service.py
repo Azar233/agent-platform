@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import json
 import math
 import os
 import shutil
 import tempfile
 import threading
+import time
 import zipfile
 from collections import Counter
 from datetime import datetime
@@ -31,6 +33,7 @@ from app.entity.db_models import (
     ProductPrice,
     TrainingTask,
 )
+from app.services.camera_state import is_camera_active
 from app.services.model_version_service import model_version_service
 from app.services.track_aggregator import TrackRegistry
 
@@ -608,6 +611,10 @@ class DetectionService:
             )
         stride = max(1, settings.VIDEO_TRACK_FRAME_STRIDE)
 
+        # 限速：避免视频跟踪任务全速占用 GPU/CPU，与实时摄像头并发时帧率抖动。
+        base_target_fps = max(0.5, settings.VIDEO_TRACK_MAX_FPS)
+        camera_active_target_fps = max(0.5, settings.VIDEO_TRACK_CAMERA_ACTIVE_MAX_FPS)
+
         model = self._load_fresh_model(model_path)
         registry = TrackRegistry(min_hits=3, max_misses=3, min_confidence=conf)
         device = self._get_device()
@@ -649,57 +656,83 @@ class DetectionService:
                 logger.warning("标注视频初始化异常，将跳过视频生成: %s", cv_exc)
                 video_writer = None
 
-        if progress_callback:
-            progress_callback(5, "正在初始化轨迹跟踪")
+        # 标注帧写入独立线程，避免 H.264 编码/plot 占用 starlette 线程池拖累实时摄像头。
+        annotator_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="video-annotator"
+        )
 
-        while True:
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                break
-            frame_index += 1
-            if frame_index % stride != 0:
-                continue
-            with _PREDICT_LOCK:
-                result = model.track(
-                    source=frame,
-                    persist=True,
-                    tracker="bytetrack.yaml",
-                    conf=conf,
-                    iou=iou,
-                    imgsz=image_size,
-                    device=device,
-                    half=self._use_half(device),
-                    save=False,
-                    verbose=False,
-                )[0]
-            total_inference += float((result.speed or {}).get("inference", 0))
-            tracks = self._serialize_tracks(result)
-            peaks = registry.update(frame_index, frame_index / fps, tracks)
-            self._capture_evidence(evidence, peaks, tracks, frame)
-            if video_writer is not None:
-                try:
-                    annotated_frame = result.plot()
-                    if annotated_frame is not None and annotated_frame.size > 0:
-                        frame_height, frame_width = annotated_frame.shape[:2]
-                        if (frame_width, frame_height) != (width, height):
-                            annotated_frame = cv2.resize(annotated_frame, (width, height))
-                        if hasattr(video_writer, "append_data"):
-                            video_writer.append_data(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB))
-                        else:
-                            video_writer.write(annotated_frame)
-                except Exception as exc:
-                    logger.warning("标注视频帧写入失败，停止生成视频: %s", exc)
+        def _append_annotation(frame_to_write, result_to_plot) -> None:
+            nonlocal video_writer
+            if video_writer is None:
+                return
+            try:
+                annotated_frame = result_to_plot.plot()
+                if annotated_frame is not None and annotated_frame.size > 0:
+                    frame_height, frame_width = annotated_frame.shape[:2]
+                    if (frame_width, frame_height) != (width, height):
+                        annotated_frame = cv2.resize(annotated_frame, (width, height))
+                    if hasattr(video_writer, "append_data"):
+                        video_writer.append_data(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB))
+                    else:
+                        video_writer.write(annotated_frame)
+            except Exception as exc:
+                logger.warning("标注视频帧写入失败，停止生成视频: %s", exc)
+                if video_writer is not None:
                     if hasattr(video_writer, "close"):
                         video_writer.close()
                     else:
                         video_writer.release()
                     video_writer = None
-            processed += 1
-            if progress_callback:
-                percent = min(5 + round(processed / expected * 90), 95)
-                if percent > last_percent:
-                    last_percent = percent
-                    progress_callback(percent, f"正在跟踪视频帧 {processed}/{expected}")
+
+        if progress_callback:
+            progress_callback(5, "正在初始化轨迹跟踪")
+
+        try:
+            while True:
+                loop_start = time.perf_counter()
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    break
+                frame_index += 1
+                if frame_index % stride != 0:
+                    continue
+
+                # 摄像头实时检测激活时主动避让，把 GPU 时间片让给摄像头。
+                target_fps = camera_active_target_fps if is_camera_active() else base_target_fps
+                target_interval = 1.0 / target_fps
+
+                with _PREDICT_LOCK:
+                    result = model.track(
+                        source=frame,
+                        persist=True,
+                        tracker="bytetrack.yaml",
+                        conf=conf,
+                        iou=iou,
+                        imgsz=image_size,
+                        device=device,
+                        half=self._use_half(device),
+                        save=False,
+                        verbose=False,
+                    )[0]
+                total_inference += float((result.speed or {}).get("inference", 0))
+                tracks = self._serialize_tracks(result)
+                peaks = registry.update(frame_index, frame_index / fps, tracks)
+                self._capture_evidence(evidence, peaks, tracks, frame)
+                if video_writer is not None:
+                    annotator_executor.submit(_append_annotation, frame, result).result()
+                processed += 1
+                if progress_callback:
+                    percent = min(5 + round(processed / expected * 90), 95)
+                    if percent > last_percent:
+                        last_percent = percent
+                        progress_callback(percent, f"正在跟踪视频帧 {processed}/{expected}")
+
+                elapsed = time.perf_counter() - loop_start
+                sleep_time = max(0.0, target_interval - elapsed)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+        finally:
+            annotator_executor.shutdown(wait=True)
 
         if processed == 0:
             if video_writer is not None:

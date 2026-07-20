@@ -21,6 +21,7 @@ from fastapi import (
 from starlette.concurrency import run_in_threadpool
 from app.api.camera import configured_ip_webcam_url, normalize_ip_webcam_url
 from app.config.settings import settings
+from app.services.camera_state import set_camera_active, set_camera_inactive
 from app.services.detection_service import DetectionServiceError, detection_service
 from app.services.realtime_stabilizer import RealtimeDetectionStabilizer
 from app.services.track_aggregator import TrackRegistry
@@ -163,6 +164,7 @@ def _release_camera_session(session: dict) -> None:
 
     if _CAMERA_ACTIVE_SESSION is session:
         _CAMERA_ACTIVE_SESSION = None
+        set_camera_inactive()
     session["closed"].set()
 
 
@@ -322,6 +324,7 @@ async def camera_detection_ws(websocket: WebSocket):
         )
         reset_scan = asyncio.Event()
         control_task = asyncio.create_task(_camera_control(websocket, stopped, reset_scan))
+        set_camera_active()
         frame_count = 0
         newly_confirmed: list[dict[str, Any]] = []
         # 累计模式用 ByteTrack 做跨帧 ID 去重；瞬时模式回退到轻量的
