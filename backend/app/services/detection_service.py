@@ -714,7 +714,7 @@ class DetectionService:
                 video_writer.close()
             else:
                 video_writer.release()
-        annotated_video_url = f"/media/video-annotated/{annotated_path.name}" if annotated_path.is_file() else None
+        annotated_video_url = self._publish_annotated_video(annotated_path, task.id)
 
         summaries, items, price_summary = self._finalize_tracked_video(
             db,
@@ -758,6 +758,31 @@ class DetectionService:
             "price_summary": price_summary,
             "annotated_video_url": annotated_video_url,
         }
+
+    @staticmethod
+    def _publish_annotated_video(annotated_path: Path, task_id: int) -> str | None:
+        """Upload the annotated video to MinIO; fall back to local /media on failure.
+
+        The video URL is consumed immediately by the frontend player and is not
+        persisted, so a 7-day presigned URL is sufficient. Local temp file is
+        removed after a successful upload.
+        """
+        if not annotated_path.is_file():
+            return None
+        content_type = "video/mp4" if annotated_path.suffix == ".mp4" else "video/x-msvideo"
+        object_name = f"video-annotated/task_{task_id}{annotated_path.suffix}"
+        try:
+            from app.storage.minio_client import MinIOClient
+
+            url = MinIOClient().upload_file(object_name, str(annotated_path), content_type=content_type)
+            try:
+                annotated_path.unlink()
+            except OSError:
+                pass
+            return url
+        except Exception as exc:  # noqa: BLE001 - MinIO 故障不应中断检测
+            logger.warning("标注视频上传 MinIO 失败，退回本地存储: %s", exc)
+            return f"/media/video-annotated/{annotated_path.name}"
 
     @staticmethod
     def _serialize_tracks(result: Any) -> list[dict[str, Any]]:

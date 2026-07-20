@@ -672,6 +672,9 @@ def test_video_tracking_dedups_by_track_and_saves_evidence(db_session, monkeypat
             self.names = {0: "drink", 1: "chocolate"}
             self.speed = {"inference": 2.0}
 
+        def plot(self):
+            return np.zeros((720, 1280, 3), dtype=np.uint8)
+
     class FakeModel:
         def track(self, **_kwargs):
             calls["index"] += 1
@@ -694,7 +697,9 @@ def test_video_tracking_dedups_by_track_and_saves_evidence(db_session, monkeypat
     assert result["object_count_mode"] == "bytetrack_unique_tracks"
     assert result["total_objects"] == 2
     assert result["class_counts"] == {"drink": 1, "chocolate": 1}
-    assert result["peak_simultaneous"] == 2
+    # min_hits=3 时 track 1 要到第 3 帧才确认，与 track 2（第 2 帧高置信确认）
+    # 从未同时在线，峰值同时数为 1。
+    assert result["peak_simultaneous"] == 1
     assert result["processed_frames"] == 3
     assert len(result["tracks"]) == 2
     drink_track = next(track for track in result["tracks"] if track["class_name"] == "drink")
