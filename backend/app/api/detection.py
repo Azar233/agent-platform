@@ -459,6 +459,10 @@ async def camera_detection_ws(websocket: WebSocket):
             _frame_sender(websocket, send_queue, stopped, frame_interval)
         )
 
+        frame_count = 0
+        last_snapshot: dict[str, Any] | None = None
+        inference_stride = max(1, settings.CAMERA_INFERENCE_STRIDE)
+
         while not stopped.is_set():
             latest = await run_in_threadpool(frame_reader.latest, last_sequence, 1.0)
             if latest is None:
@@ -469,21 +473,12 @@ async def camera_detection_ws(websocket: WebSocket):
             dropped_frames += max(0, sequence - last_sequence - 1)
             last_sequence = sequence
             last_frame_at = time.perf_counter()
-            raw_result = await run_in_threadpool(
-                detection_service.detect_realtime_frame,
-                model_context["model"],
-                frame,
-                conf=options["conf"],
-                iou=options["iou"],
-                image_size=settings.CAMERA_IMAGE_SIZE,
-                jpeg_quality=settings.CAMERA_JPEG_QUALITY,
-                output_max_width=settings.CAMERA_OUTPUT_MAX_WIDTH,
-                finalize=False,
-                tracking=True,
-            )
+            frame_count += 1
+
             if reset_scan.is_set():
                 registry = _new_registry()
                 newly_confirmed.clear()
+                last_snapshot = None
                 reset_scan.clear()
                 # 排空队列中滞留的重置前快照，保证重扫后下一帧即是新累计状态
                 while True:
@@ -491,32 +486,65 @@ async def camera_detection_ws(websocket: WebSocket):
                         send_queue.get_nowait()
                     except asyncio.QueueEmpty:
                         break
-            registry.update(sequence, time.perf_counter(), raw_result["detections"])
-            stable_detections = registry.active_tracks()
-            accumulate = options["accumulate"]
-            price_detections = None
-            if accumulate:
-                price_detections = [
-                    {"class_id": record.class_id, "class_name": record.class_name}
-                    for record in registry.confirmed_tracks()
-                ]
-            confirmed_batch = list(newly_confirmed)
-            newly_confirmed.clear()
+
+            # 跳帧推理：每隔 inference_stride 帧做一次真正的推理，
+            # 中间帧复用最近一次推理结果，降低 GPU/CPU 压力。
+            should_infer = last_snapshot is None or (frame_count % inference_stride) == 0
+
+            if should_infer:
+                raw_result = await run_in_threadpool(
+                    detection_service.detect_realtime_frame,
+                    model_context["model"],
+                    frame,
+                    conf=options["conf"],
+                    iou=options["iou"],
+                    image_size=settings.CAMERA_IMAGE_SIZE,
+                    jpeg_quality=settings.CAMERA_JPEG_QUALITY,
+                    output_max_width=settings.CAMERA_OUTPUT_MAX_WIDTH,
+                    finalize=False,
+                    tracking=True,
+                )
+                registry.update(sequence, time.perf_counter(), raw_result["detections"])
+                stable_detections = registry.active_tracks()
+                accumulate = options["accumulate"]
+                price_detections = None
+                if accumulate:
+                    price_detections = [
+                        {"class_id": record.class_id, "class_name": record.class_name}
+                        for record in registry.confirmed_tracks()
+                    ]
+                confirmed_batch = list(newly_confirmed)
+                newly_confirmed.clear()
+                last_snapshot = {
+                    "detections": stable_detections,
+                    "price_detections": price_detections,
+                    "raw_object_count": len(raw_result["detections"]),
+                    "scan_total_objects": registry.total_unique,
+                    "scan_class_counts": registry.dedup_class_counts(),
+                    "inference_time_ms": raw_result["inference_time_ms"],
+                }
+            else:
+                # 非推理帧复用上一次快照，不重复触发累计确认事件。
+                confirmed_batch = []
+
+            if last_snapshot is None:
+                continue
+
             item = {
                 "frame": frame,
-                "detections": stable_detections,
-                "price_detections": price_detections,
-                "inference_time_ms": raw_result["inference_time_ms"],
+                "detections": last_snapshot["detections"],
+                "price_detections": last_snapshot["price_detections"],
+                "inference_time_ms": last_snapshot["inference_time_ms"] if should_infer else 0.0,
                 "captured_at": captured_at,
                 "sequence": sequence,
                 "dropped_frames": dropped_frames,
-                "raw_object_count": len(raw_result["detections"]),
-                "scan_total_objects": registry.total_unique,
-                "scan_class_counts": registry.dedup_class_counts(),
+                "raw_object_count": last_snapshot["raw_object_count"],
+                "scan_total_objects": last_snapshot["scan_total_objects"],
+                "scan_class_counts": last_snapshot["scan_class_counts"],
                 "new_confirmed": confirmed_batch,
             }
             # 背压：队列满说明 sender 还在处理上一帧，等它取走后再继续；
-            # 已推理的帧（含确认事件、计价快照）在这里不会被丢弃。
+            # 已准备的帧（含确认事件、计价快照）在这里不会被丢弃。
             enqueued = False
             while not stopped.is_set():
                 if reset_scan.is_set() or sender_task.done():
