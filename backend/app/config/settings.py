@@ -73,9 +73,10 @@ class Settings(BaseSettings):
     CAMERA_OUTPUT_MAX_WIDTH: int = 960
     CAMERA_READ_TIMEOUT_MS: int = 2000
     CAMERA_STALE_TIMEOUT_SECONDS: float = 5.0
-    CAMERA_STABILITY_MIN_HITS: int = 3
+    CAMERA_STABILITY_MIN_HITS: int = 2
     CAMERA_STABILITY_MAX_MISSES: int = 3
     CAMERA_STABILITY_IOU: float = 0.25
+    CAMERA_INFERENCE_STRIDE: int = 2  # 1=每帧推理，2=每2帧推理一次，中间帧复用结果
 
     # ── DeepSeek Agent 配置（OpenAI 兼容接口）─────────
     DEEPSEEK_API_KEY: str = ""
