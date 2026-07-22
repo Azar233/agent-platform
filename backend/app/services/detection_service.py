@@ -609,7 +609,12 @@ class DetectionService:
         stride = max(1, settings.VIDEO_TRACK_FRAME_STRIDE)
 
         model = self._load_fresh_model(model_path)
-        registry = TrackRegistry(min_hits=3, max_misses=3, min_confidence=conf)
+        registry = TrackRegistry(
+            min_hits=3,
+            max_misses=3,
+            min_confidence=conf,
+            high_confidence=0.30,
+        )
         device = self._get_device()
         evidence: dict[int, bytes] = {}
         total_inference = 0.0

@@ -439,6 +439,7 @@ async def camera_detection_ws(websocket: WebSocket):
                 min_hits=settings.CAMERA_STABILITY_MIN_HITS,
                 max_misses=settings.CAMERA_STABILITY_MAX_MISSES,
                 min_confidence=options["conf"],
+                high_confidence=0.30,
                 on_track_confirmed=lambda record: newly_confirmed.append(
                     {
                         "track_id": record.track_id,
@@ -462,6 +463,7 @@ async def camera_detection_ws(websocket: WebSocket):
         frame_count = 0
         last_snapshot: dict[str, Any] | None = None
         inference_stride = max(1, settings.CAMERA_INFERENCE_STRIDE)
+        force_infer_frames = 0
 
         while not stopped.is_set():
             latest = await run_in_threadpool(frame_reader.latest, last_sequence, 1.0)
@@ -479,6 +481,7 @@ async def camera_detection_ws(websocket: WebSocket):
                 registry = _new_registry()
                 newly_confirmed.clear()
                 last_snapshot = None
+                force_infer_frames = 3  # 重置后连续推理，保证确认流程不受跳帧影响
                 reset_scan.clear()
                 # 排空队列中滞留的重置前快照，保证重扫后下一帧即是新累计状态
                 while True:
@@ -489,7 +492,13 @@ async def camera_detection_ws(websocket: WebSocket):
 
             # 跳帧推理：每隔 inference_stride 帧做一次真正的推理，
             # 中间帧复用最近一次推理结果，降低 GPU/CPU 压力。
-            should_infer = last_snapshot is None or (frame_count % inference_stride) == 0
+            should_infer = (
+                last_snapshot is None
+                or (frame_count % inference_stride) == 0
+                or force_infer_frames > 0
+            )
+            if force_infer_frames > 0:
+                force_infer_frames -= 1
 
             if should_infer:
                 raw_result = await run_in_threadpool(

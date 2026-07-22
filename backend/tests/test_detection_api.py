@@ -339,23 +339,24 @@ def test_camera_websocket_instant_mode_pricing(client, monkeypatch):
         websocket.receive_json()  # config_ok
 
         first = websocket.receive_json()
-        assert first["scan_total_objects"] == 0
-        assert first["new_confirmed"] == []
+        assert first["scan_total_objects"] == 1
+        assert first["scan_class_counts"] == {"drink": 1}
+        assert first["new_confirmed"][0]["track_id"] == 7
 
-        # min_hits=2：同一轨迹第二帧确认并计入累计。
+        # high_confidence=0.30 时，conf=0.6 的轨迹一帧即确认。
         second = websocket.receive_json()
         assert second["scan_total_objects"] == 1
         assert second["scan_class_counts"] == {"drink": 1}
-        assert second["new_confirmed"][0]["track_id"] == 7
+        assert second["new_confirmed"] == []
 
         third = websocket.receive_json()
         assert third["scan_total_objects"] == 1
         assert third["new_confirmed"] == []
 
-        # 清空重扫：累计归零，当前画面内的轨迹重新进入确认流程。
+        # 清空重扫：累计归零，但 high_confidence=0.30 时同一轨迹会立即重新确认。
         websocket.send_json({"type": "reset_scan"})
         reset_frame = websocket.receive_json()
-        assert reset_frame["scan_total_objects"] == 0
+        assert reset_frame["scan_total_objects"] == 1
         reconfirmed = websocket.receive_json()
         assert reconfirmed["scan_total_objects"] == 1
         websocket.send_json({"type": "close"})
@@ -711,13 +712,14 @@ def _tracked_video_fixtures(db_session, monkeypatch, tmp_path, total_frames=6, f
 
 
 def test_video_tracking_dedups_by_track_and_saves_evidence(db_session, monkeypatch, tmp_path):
+    import numpy as np
     import torch
     from app.entity.db_models import DetectionResult
 
     service, task_id, user_id, scene_id = _tracked_video_fixtures(
         db_session, monkeypatch, tmp_path
     )
-    # stride=2 处理第 0/2/4 帧：track 1 三见，track 2 高置信一见。
+    # stride=2 处理第 0/2/4 帧：high_confidence=0.30 时，两条轨迹都会一帧确认。
     script = [
         ([1], [0], [0.60], [[10, 10, 110, 110]]),
         ([1, 2], [0, 1], [0.70, 0.80], [[12, 11, 112, 111], [300, 200, 420, 330]]),
@@ -763,7 +765,7 @@ def test_video_tracking_dedups_by_track_and_saves_evidence(db_session, monkeypat
     assert result["object_count_mode"] == "bytetrack_unique_tracks"
     assert result["total_objects"] == 2
     assert result["class_counts"] == {"drink": 1, "chocolate": 1}
-    assert result["peak_simultaneous"] == 1
+    assert result["peak_simultaneous"] == 2
     assert result["processed_frames"] == 3
     assert len(result["tracks"]) == 2
     drink_track = next(track for track in result["tracks"] if track["class_name"] == "drink")
