@@ -11,23 +11,18 @@
   >
     <div class="vision-journey__stage">
       <div class="vision-journey__stars" aria-hidden="true"></div>
-      <div class="vision-journey__aurora" aria-hidden="true"></div>
-      <div class="vision-journey__noise" aria-hidden="true"></div>
       <header class="vision-journey__header">
-        <span>VISIONPAY</span>
-        <div class="vision-journey__header-side">
-          <small>{{ entryLabel }}</small>
-          <button
-            type="button"
-            class="vision-journey__theme-toggle"
-            :aria-label="themeLabel"
-            @click="toggleTheme"
-          >
-            <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
-            {{ isDark ? '浅色' : '深色' }}
-          </button>
-        </div>
+        <span>VISIONPAY</span><small>{{ entryLabel }}</small>
       </header>
+      <button
+        type="button"
+        class="vision-journey__theme-toggle"
+        :aria-label="themeLabel"
+        @click="toggleTheme"
+      >
+        <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
+        {{ isDark ? '浅色' : '深色' }}
+      </button>
 
       <nav
         v-if="usesScrollDriver"
@@ -42,7 +37,6 @@
           :aria-label="`前往第 ${index + 1} 章`"
           @click="scrollToChapter(index)"
         >
-          <span class="vision-journey__progress-label">{{ chapterLabels[index] }}</span>
           <i></i>
         </button>
       </nav>
@@ -150,7 +144,6 @@ const { isTouchPrimary, prefersReducedMotion, usesScrollDriver, initializeNarrat
   useNarrativeDriver()
 const { isDark, themeLabel, toggleTheme } = useTheme()
 const chapters = [ChapterAwakening, ChapterRecognition, ChapterTeam]
-const chapterLabels = ['觉醒', '识别', '团队']
 const poseByChapter = ['awakening', 'recognition', 'team']
 const scrollProgress = ref(0)
 const scrollChapterProgress = ref(0)
@@ -286,9 +279,7 @@ onBeforeUnmount(() => {
 
 <style lang="scss" scoped>
 .vision-journey {
-  // 300vh 让三个章节各自分到约一屏的滚动消化区间；useScrollDriver 的章节区间是 0-1 归一化比例，
-  // ScrollTrigger 起止为 root 的 top/bottom，均不硬编码该值，无需同步调整 JS 参数。
-  min-height: 300vh;
+  min-height: 220vh;
   color: $text-primary;
   background: $vj-bg;
   background-attachment: fixed;
@@ -333,33 +324,6 @@ onBeforeUnmount(() => {
   will-change: transform;
   pointer-events: none;
 }
-// 星空之上的品牌渐变光带与细噪点，提升首屏层次；位于内容层（z-index: 1）之下，不影响可读性。
-.vision-journey__aurora {
-  position: absolute;
-  inset: -18% -14%;
-  background:
-    radial-gradient(48% 36% at 20% 22%, var(--vp-aurora-2), transparent 70%),
-    radial-gradient(54% 40% at 82% 74%, var(--vp-aurora-3), transparent 72%),
-    linear-gradient(
-      118deg,
-      transparent 30%,
-      var(--vp-aurora-1) 47%,
-      var(--vp-aurora-2) 59%,
-      transparent 76%
-    );
-  transform: rotate(-6deg) translate3d(0, calc(var(--journey-progress) * -30px), 0);
-  will-change: transform;
-  pointer-events: none;
-}
-.vision-journey__noise {
-  position: absolute;
-  inset: 0;
-  opacity: 0.04;
-  background-image:
-    repeating-linear-gradient(0deg, $text-primary 0 1px, transparent 1px 3px),
-    repeating-linear-gradient(90deg, $text-primary 0 1px, transparent 1px 3px);
-  pointer-events: none;
-}
 .vision-journey__header {
   position: absolute;
   z-index: 4;
@@ -367,7 +331,6 @@ onBeforeUnmount(() => {
   right: max(28px, calc((100vw - 1240px) / 2));
   left: max(28px, calc((100vw - 1240px) / 2));
   display: flex;
-  align-items: center;
   justify-content: space-between;
   color: $vj-header-text;
   font-size: 11px;
@@ -376,11 +339,6 @@ onBeforeUnmount(() => {
 }
 .vision-journey__header small {
   color: $vj-header-accent;
-}
-.vision-journey__header-side {
-  display: flex;
-  align-items: center;
-  gap: 14px;
 }
 .vision-journey__chapter,
 .vision-journey__character-zone {
@@ -430,6 +388,10 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
 }
 .vision-journey__theme-toggle {
+  position: fixed;
+  z-index: 6;
+  top: 60px;
+  left: max(28px, calc((100vw - 1240px) / 2));
   display: flex;
   align-items: center;
   gap: 6px;
@@ -439,7 +401,6 @@ onBeforeUnmount(() => {
   color: $text-secondary;
   background: color-mix(in srgb, $surface-color 78%, transparent);
   font-size: 11px;
-  font-weight: 600;
   letter-spacing: 0.04em;
   cursor: pointer;
   backdrop-filter: blur(14px);
@@ -453,17 +414,14 @@ onBeforeUnmount(() => {
   top: 50%;
   right: max(22px, calc((100vw - 1320px) / 2));
   display: grid;
-  gap: 8px;
+  gap: 10px;
   transform: translateY(-50%);
 }
 .vision-journey__progress button {
-  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-width: 24px;
-  min-height: 24px;
-  padding: 0;
+  gap: 7px;
+  padding: 2px;
   border: 0;
   color: $vj-progress-text;
   background: transparent;
@@ -474,53 +432,15 @@ onBeforeUnmount(() => {
   height: 7px;
   border: 1px solid currentColor;
   border-radius: 50%;
-  transition:
-    width 0.28s var(--vp-ease-vision-out),
-    height 0.28s var(--vp-ease-vision-out),
-    border-color 0.24s ease,
-    border-radius 0.28s var(--vp-ease-vision-out),
-    background 0.24s ease,
-    box-shadow 0.24s ease;
-}
-.vision-journey__progress-label {
-  position: absolute;
-  top: 50%;
-  right: calc(100% + 10px);
-  padding: 3px 9px;
-  border: 1px solid color-mix(in srgb, $vj-progress-text-active 18%, transparent);
-  border-radius: 999px;
-  color: $vj-progress-text-active;
-  background: color-mix(in srgb, $surface-color 72%, transparent);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-  opacity: 0;
-  transform: translate(6px, -50%);
-  transition:
-    opacity 0.24s ease,
-    transform 0.24s var(--vp-ease-vision-out);
-  pointer-events: none;
-  backdrop-filter: blur(8px);
 }
 .vision-journey__progress button:hover,
 .vision-journey__progress button.active {
   color: $vj-progress-text-active;
 }
-.vision-journey__progress button:hover .vision-journey__progress-label,
-.vision-journey__progress button:focus-visible .vision-journey__progress-label {
-  opacity: 1;
-  transform: translate(0, -50%);
-}
 .vision-journey__progress button.active i {
-  width: 6px;
-  height: 19px;
-  border-color: transparent;
-  border-radius: 999px;
-  background: var(--vp-brand-gradient);
-  html.dark & {
-    box-shadow: 0 0 12px var(--vp-border-glow);
-  }
+  border-color: $agent-detection;
+  background: $agent-detection;
+  box-shadow: 0 0 12px $agent-detection;
 }
 .vision-journey__touch-nav {
   position: fixed;
@@ -600,16 +520,10 @@ onBeforeUnmount(() => {
   .vision-journey__scroll-hint {
     display: none;
   }
-  .vision-journey__header {
-    top: 18px;
-    right: 20px;
-    left: 20px;
-  }
-  .vision-journey__header-side {
-    gap: 10px;
-  }
   .vision-journey__theme-toggle {
-    padding: 6px 9px;
+    top: 58px;
+    left: 16px;
+    padding: 6px 10px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -620,13 +534,8 @@ onBeforeUnmount(() => {
     opacity: 0.22;
   }
   .vision-journey__stars,
-  .vision-journey__aurora,
   .vision-journey__character-zone {
     transform: none;
-    transition: none;
-  }
-  .vision-journey__progress i,
-  .vision-journey__progress-label {
     transition: none;
   }
 }
