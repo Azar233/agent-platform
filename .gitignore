@@ -178,4 +178,5 @@ log/
 scripts/
 !/frontend/scripts/
 !/frontend/scripts/dev-all.js
+outputs/
 artifacts/

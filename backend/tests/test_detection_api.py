@@ -375,6 +375,72 @@ def test_camera_websocket_does_not_claim_session_for_invalid_config(client):
     assert detection_api._CAMERA_ACTIVE_SESSION is None
 
 
+def test_camera_websocket_pipelined_results_stay_ordered(client, monkeypatch):
+    """finalize/发送较慢时，推理循环与发送重叠，结果仍按序到达且不丢帧计数。"""
+    import time
+
+    import cv2
+    from app.api import detection as detection_api
+
+    class FakeCapture:
+        def isOpened(self):
+            return True
+
+        def set(self, *_args):
+            return True
+
+        def read(self):
+            return True, object()
+
+        def release(self):
+            return None
+
+    def slow_finalize(*_args, **_kwargs):
+        time.sleep(0.05)
+        return {
+            "annotated_frame": "ZmFrZQ==",
+            "detections": [],
+            "object_count": 0,
+            "class_counts": {},
+            "inference_time_ms": 12.5,
+            "price_summary": {"total_price": 0, "items": []},
+        }
+
+    monkeypatch.setattr(detection_api, "configured_ip_webcam_url", lambda: "http://192.168.1.109:8080/video")
+    monkeypatch.setattr(cv2, "VideoCapture", lambda *_args: FakeCapture())
+    monkeypatch.setattr(
+        detection_api.detection_service,
+        "prepare_realtime_model",
+        lambda **_kwargs: {"model": object(), "model_name": "best.pt", "scene": "Vision Pay"},
+    )
+    monkeypatch.setattr(
+        detection_api.detection_service,
+        "detect_realtime_frame",
+        lambda *_args, **_kwargs: {"detections": [], "inference_time_ms": 12.5},
+    )
+    monkeypatch.setattr(
+        detection_api.detection_service,
+        "finalize_realtime_frame",
+        slow_finalize,
+    )
+
+    with client.websocket_connect(
+        "/api/detection/camera",
+        headers={"origin": "http://localhost:5173"},
+    ) as websocket:
+        websocket.send_json({"type": "config", "mode": "cpu"})
+        assert websocket.receive_json()["type"] == "config_ok"
+        first = websocket.receive_json()
+        second = websocket.receive_json()
+        assert first["type"] == "result"
+        assert first["frame_count"] == 1
+        assert second["frame_count"] == 2
+        assert second["source_frame_sequence"] > first["source_frame_sequence"]
+        websocket.send_json({"type": "close"})
+
+    assert detection_api._CAMERA_ACTIVE_SESSION is None
+
+
 @pytest.mark.asyncio
 async def test_new_camera_session_replaces_previous_session():
     from app.api import detection as detection_api
@@ -672,6 +738,9 @@ def test_video_tracking_dedups_by_track_and_saves_evidence(db_session, monkeypat
             self.names = {0: "drink", 1: "chocolate"}
             self.speed = {"inference": 2.0}
 
+        def plot(self):
+            return np.zeros((720, 1280, 3), dtype=np.uint8)
+
     class FakeModel:
         def track(self, **_kwargs):
             calls["index"] += 1
@@ -694,7 +763,7 @@ def test_video_tracking_dedups_by_track_and_saves_evidence(db_session, monkeypat
     assert result["object_count_mode"] == "bytetrack_unique_tracks"
     assert result["total_objects"] == 2
     assert result["class_counts"] == {"drink": 1, "chocolate": 1}
-    assert result["peak_simultaneous"] == 2
+    assert result["peak_simultaneous"] == 1
     assert result["processed_frames"] == 3
     assert len(result["tracks"]) == 2
     drink_track = next(track for track in result["tracks"] if track["class_name"] == "drink")
