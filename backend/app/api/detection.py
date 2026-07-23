@@ -268,6 +268,115 @@ async def _camera_control(websocket: WebSocket, stopped: asyncio.Event, reset_sc
         stopped.set()
 
 
+async def _frame_sender(
+    websocket: WebSocket,
+    send_queue: asyncio.Queue,
+    stopped: asyncio.Event,
+    frame_interval: float,
+) -> None:
+    """Finalize (annotate/price) and send frames, overlapped with the next inference.
+
+    The inference loop stays strictly serial (ByteTrack state); this coroutine is
+    the only WebSocket writer once started. The bounded queue applies backpressure,
+    so no inferred frame — and none of its confirmed events — is dropped here.
+    """
+    frame_count = 0
+    previous_result_at = time.perf_counter()
+    while True:
+        item = await send_queue.get()
+        if item is None:
+            return
+        cycle_started = time.perf_counter()
+        try:
+            result = await run_in_threadpool(
+                detection_service.finalize_realtime_frame,
+                item["frame"],
+                item["detections"],
+                inference_time_ms=item["inference_time_ms"],
+                jpeg_quality=settings.CAMERA_JPEG_QUALITY,
+                output_max_width=settings.CAMERA_OUTPUT_MAX_WIDTH,
+                price_detections=item["price_detections"],
+            )
+        except DetectionServiceError as exc:
+            message = str(exc)
+        except Exception as exc:
+            message = f"实时检测异常: {exc}"
+        else:
+            message = None
+        if message is not None:
+            stopped.set()
+            try:
+                await websocket.send_json({"type": "error", "message": message})
+            except RuntimeError:
+                pass
+            return
+        frame_count += 1
+        now = time.perf_counter()
+        result.update(
+            {
+                "type": "result",
+                "frame_count": frame_count,
+                "fps": round(1 / max(now - previous_result_at, 0.001), 1),
+                "pipeline_latency_ms": round((now - item["captured_at"]) * 1000, 1),
+                "dropped_frames": item["dropped_frames"],
+                "source_frame_sequence": item["sequence"],
+                "raw_object_count": item["raw_object_count"],
+                "temporal_stabilized": True,
+                "scan_total_objects": item["scan_total_objects"],
+                "scan_class_counts": item["scan_class_counts"],
+                "new_confirmed": item["new_confirmed"],
+            }
+        )
+        previous_result_at = now
+        try:
+            await websocket.send_json(result)
+        except (WebSocketDisconnect, RuntimeError):
+            stopped.set()
+            return
+        # 输出帧率上限仍由 CAMERA_TARGET_FPS 控制，但不再串行阻塞推理循环。
+        remaining = frame_interval - (time.perf_counter() - cycle_started)
+        if remaining > 0:
+            try:
+                await asyncio.wait_for(stopped.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                pass
+        if stopped.is_set():
+            return
+
+
+async def _stop_sender(
+    send_queue: asyncio.Queue | None,
+    sender_task: asyncio.Task | None,
+) -> None:
+    """Drain the frame sender via a sentinel, cancelling only as a last resort."""
+    if send_queue is None or sender_task is None or sender_task.done():
+        return
+    try:
+        send_queue.put_nowait(None)
+    except asyncio.QueueFull:
+        try:
+            send_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+        try:
+            send_queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+    try:
+        await asyncio.wait_for(sender_task, timeout=2.0)
+    except asyncio.TimeoutError:
+        sender_task.cancel()
+        try:
+            await sender_task
+        except asyncio.CancelledError:
+            pass
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # sender 自身已处理业务异常；这里兜底，避免清理动作掩盖主流程异常
+        pass
+
+
 @router.websocket("/camera")
 async def camera_detection_ws(websocket: WebSocket):
     """Pull the configured IP Webcam MJPEG stream and return annotated frames."""
@@ -280,6 +389,8 @@ async def camera_detection_ws(websocket: WebSocket):
     session = None
     stopped = None
     control_task = None
+    send_queue = None
+    sender_task = None
     await websocket.accept()
     try:
         initial = await asyncio.wait_for(websocket.receive_json(), timeout=10)
@@ -321,7 +432,6 @@ async def camera_detection_ws(websocket: WebSocket):
         )
         reset_scan = asyncio.Event()
         control_task = asyncio.create_task(_camera_control(websocket, stopped, reset_scan))
-        frame_count = 0
         newly_confirmed: list[dict[str, Any]] = []
 
         def _new_registry() -> TrackRegistry:
@@ -340,14 +450,20 @@ async def camera_detection_ws(websocket: WebSocket):
             )
 
         registry = _new_registry()
-        previous_result_at = time.perf_counter()
         frame_interval = 1 / max(0.5, settings.CAMERA_TARGET_FPS)
         last_sequence = 0
         last_frame_at = time.perf_counter()
         dropped_frames = 0
+        send_queue = asyncio.Queue(maxsize=1)
+        sender_task = asyncio.create_task(
+            _frame_sender(websocket, send_queue, stopped, frame_interval)
+        )
+
+        frame_count = 0
+        last_snapshot: dict[str, Any] | None = None
+        inference_stride = max(1, settings.CAMERA_INFERENCE_STRIDE)
 
         while not stopped.is_set():
-            cycle_started = time.perf_counter()
             latest = await run_in_threadpool(frame_reader.latest, last_sequence, 1.0)
             if latest is None:
                 if time.perf_counter() - last_frame_at > settings.CAMERA_STALE_TIMEOUT_SECONDS:
@@ -357,77 +473,104 @@ async def camera_detection_ws(websocket: WebSocket):
             dropped_frames += max(0, sequence - last_sequence - 1)
             last_sequence = sequence
             last_frame_at = time.perf_counter()
-            raw_result = await run_in_threadpool(
-                detection_service.detect_realtime_frame,
-                model_context["model"],
-                frame,
-                conf=options["conf"],
-                iou=options["iou"],
-                image_size=settings.CAMERA_IMAGE_SIZE,
-                jpeg_quality=settings.CAMERA_JPEG_QUALITY,
-                output_max_width=settings.CAMERA_OUTPUT_MAX_WIDTH,
-                finalize=False,
-                tracking=True,
-            )
+            frame_count += 1
+
             if reset_scan.is_set():
                 registry = _new_registry()
                 newly_confirmed.clear()
+                last_snapshot = None
                 reset_scan.clear()
-            registry.update(sequence, time.perf_counter(), raw_result["detections"])
-            stable_detections = registry.active_tracks()
-            accumulate = options["accumulate"]
-            price_detections = None
-            if accumulate:
-                price_detections = [
-                    {"class_id": record.class_id, "class_name": record.class_name}
-                    for record in registry.confirmed_tracks()
-                ]
-            result = await run_in_threadpool(
-                detection_service.finalize_realtime_frame,
-                frame,
-                stable_detections,
-                inference_time_ms=raw_result["inference_time_ms"],
-                jpeg_quality=settings.CAMERA_JPEG_QUALITY,
-                output_max_width=settings.CAMERA_OUTPUT_MAX_WIDTH,
-                price_detections=price_detections,
-            )
-            frame_count += 1
-            now = time.perf_counter()
-            confirmed_batch = list(newly_confirmed)
-            newly_confirmed.clear()
-            result.update(
-                {
-                    "type": "result",
-                    "frame_count": frame_count,
-                    "fps": round(1 / max(now - previous_result_at, 0.001), 1),
-                    "pipeline_latency_ms": round((now - captured_at) * 1000, 1),
-                    "dropped_frames": dropped_frames,
-                    "source_frame_sequence": sequence,
+                # 排空队列中滞留的重置前快照，保证重扫后下一帧即是新累计状态
+                while True:
+                    try:
+                        send_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+
+            # 跳帧推理：每隔 inference_stride 帧做一次真正的推理，
+            # 中间帧复用最近一次推理结果，降低 GPU/CPU 压力。
+            should_infer = last_snapshot is None or (frame_count % inference_stride) == 0
+
+            if should_infer:
+                raw_result = await run_in_threadpool(
+                    detection_service.detect_realtime_frame,
+                    model_context["model"],
+                    frame,
+                    conf=options["conf"],
+                    iou=options["iou"],
+                    image_size=settings.CAMERA_IMAGE_SIZE,
+                    jpeg_quality=settings.CAMERA_JPEG_QUALITY,
+                    output_max_width=settings.CAMERA_OUTPUT_MAX_WIDTH,
+                    finalize=False,
+                    tracking=True,
+                )
+                registry.update(sequence, time.perf_counter(), raw_result["detections"])
+                stable_detections = registry.active_tracks()
+                accumulate = options["accumulate"]
+                price_detections = None
+                if accumulate:
+                    price_detections = [
+                        {"class_id": record.class_id, "class_name": record.class_name}
+                        for record in registry.confirmed_tracks()
+                    ]
+                confirmed_batch = list(newly_confirmed)
+                newly_confirmed.clear()
+                last_snapshot = {
+                    "detections": stable_detections,
+                    "price_detections": price_detections,
                     "raw_object_count": len(raw_result["detections"]),
-                    "temporal_stabilized": True,
                     "scan_total_objects": registry.total_unique,
                     "scan_class_counts": registry.dedup_class_counts(),
-                    "new_confirmed": confirmed_batch,
+                    "inference_time_ms": raw_result["inference_time_ms"],
                 }
-            )
-            previous_result_at = now
-            await websocket.send_json(result)
-            remaining = frame_interval - (time.perf_counter() - cycle_started)
-            if remaining > 0:
+            else:
+                # 非推理帧复用上一次快照，不重复触发累计确认事件。
+                confirmed_batch = []
+
+            if last_snapshot is None:
+                continue
+
+            item = {
+                "frame": frame,
+                "detections": last_snapshot["detections"],
+                "price_detections": last_snapshot["price_detections"],
+                "inference_time_ms": last_snapshot["inference_time_ms"],
+                "captured_at": captured_at,
+                "sequence": sequence,
+                "dropped_frames": dropped_frames,
+                "raw_object_count": last_snapshot["raw_object_count"],
+                "scan_total_objects": last_snapshot["scan_total_objects"],
+                "scan_class_counts": last_snapshot["scan_class_counts"],
+                "new_confirmed": confirmed_batch,
+            }
+            # 背压：队列满说明 sender 还在处理上一帧，等它取走后再继续；
+            # 已准备的帧（含确认事件、计价快照）在这里不会被丢弃。
+            enqueued = False
+            while not stopped.is_set():
+                if reset_scan.is_set() or sender_task.done():
+                    break
                 try:
-                    await asyncio.wait_for(stopped.wait(), timeout=remaining)
-                except asyncio.TimeoutError:
-                    pass
+                    send_queue.put_nowait(item)
+                    enqueued = True
+                    break
+                except asyncio.QueueFull:
+                    await asyncio.sleep(0.005)
+            if not enqueued:
+                # 重置/停止/sender 退出：丢弃当前快照，交给下一轮统一处理
+                continue
     except asyncio.TimeoutError:
+        await _stop_sender(send_queue, sender_task)
         await websocket.send_json({"type": "error", "message": "等待摄像头配置超时"})
     except WebSocketDisconnect:
         pass
     except (ValueError, DetectionServiceError) as exc:
+        await _stop_sender(send_queue, sender_task)
         try:
             await websocket.send_json({"type": "error", "message": str(exc)})
         except RuntimeError:
             pass
     except Exception as exc:
+        await _stop_sender(send_queue, sender_task)
         try:
             await websocket.send_json(
                 {"type": "error", "message": f"实时检测异常: {exc}"}
@@ -438,6 +581,7 @@ async def camera_detection_ws(websocket: WebSocket):
         if stopped is not None:
             stopped.set()
         try:
+            await _stop_sender(send_queue, sender_task)
             if control_task:
                 control_task.cancel()
                 try:
