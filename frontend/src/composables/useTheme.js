@@ -6,8 +6,7 @@ const isDark = ref(false)
 function preferredTheme() {
   const stored = localStorage.getItem(STORAGE_KEY)
   if (stored === 'dark' || stored === 'light') return stored
-  // 深色是品牌主视觉，未表达偏好时默认深色。
-  return 'dark'
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 function applyTheme(theme, persist = true) {
