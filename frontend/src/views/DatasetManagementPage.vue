@@ -881,8 +881,9 @@
       class="operation-progress-dialog"
       append-to-body
       :close-on-click-modal="false"
-      :close-on-press-escape="operationFinished"
-      :show-close="operationFinished"
+      :close-on-press-escape="true"
+      :show-close="true"
+      :before-close="handleOperationProgressBeforeClose"
     >
       <div class="operation-progress-content">
         <div class="operation-progress-heading">
@@ -900,6 +901,14 @@
         <p>{{ operationTask.message || '正在准备处理…' }}</p>
         <code v-if="operationTask.task_id">task_id: {{ operationTask.task_id }}</code>
         <el-alert
+          v-if="!operationFinished"
+          class="operation-background-hint"
+          title="关闭窗口不会终止任务，任务会继续在后台运行"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
           v-if="operationTask.status === 'failed'"
           class="operation-error"
           title="操作未完成，请根据上方信息检查后重试"
@@ -908,8 +917,10 @@
           show-icon
         />
       </div>
-      <template v-if="operationFinished" #footer>
-        <el-button type="primary" @click="operationProgressVisible = false">关闭</el-button>
+      <template #footer>
+        <el-button type="primary" @click="closeOperationProgress">
+          {{ operationFinished ? '关闭' : '关闭窗口，后台继续' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -981,7 +992,8 @@ const addProductVisible = ref(false)
 const deleteProductVisible = ref(false)
 const workspaceSubmitting = ref(false)
 const operationProgressVisible = ref(false)
-const operationRunToken = ref(0)
+const operationInFlight = ref(false)
+const addProductTaskDetached = ref(false)
 const operationTask = ref({
   task_id: '',
   title: '',
@@ -1111,6 +1123,11 @@ const productRules = computed(() => ({
 const currentDataset = computed(() => rows.value.find((item) => item.is_current))
 const operationFinished = computed(() =>
   ['completed', 'failed'].includes(operationTask.value.status),
+)
+const addProductOperationRunning = computed(
+  () =>
+    operationTask.value.operation === 'add_samples' &&
+    ['pending', 'running'].includes(operationTask.value.status),
 )
 const operationProgressStatus = computed(() => {
   if (operationTask.value.status === 'completed') return 'success'
@@ -1366,14 +1383,17 @@ async function submitBaseline() {
 
 const waitForOperationPoll = () => new Promise((resolve) => window.setTimeout(resolve, 180))
 
-async function runDatasetOperation(title, startTask) {
-  const runToken = operationRunToken.value + 1
-  operationRunToken.value = runToken
+async function runDatasetOperation(title, operation, startTask) {
+  if (operationInFlight.value) {
+    ElMessage.warning('已有数据集任务在后台运行，请等待当前任务完成后再发起新的后台任务')
+    return null
+  }
+  operationInFlight.value = true
   workspaceSubmitting.value = true
   operationTask.value = {
     task_id: '',
     title,
-    operation: '',
+    operation,
     status: 'pending',
     progress: 0,
     message: '正在创建后台任务…',
@@ -1395,14 +1415,11 @@ async function runDatasetOperation(title, startTask) {
   try {
     let task = await startTask()
     taskCreated = true
+    workspaceSubmitting.value = false
     operationTask.value = { title, ...task, progress: Number(task.progress || 0) }
     petTask.update({ message: `${title}：${task.message || '等待处理'}`, progress: task.progress })
     while (!['completed', 'failed'].includes(task.status)) {
       await waitForOperationPoll()
-      if (operationRunToken.value !== runToken) {
-        finishPetTask()
-        return null
-      }
       task = await getDatasetOperationStatusApi(task.task_id)
       operationTask.value = { title, ...task, progress: Number(task.progress || 0) }
       petTask.update({
@@ -1439,8 +1456,29 @@ async function runDatasetOperation(title, startTask) {
     return null
   } finally {
     finishPetTask()
-    if (operationRunToken.value === runToken) workspaceSubmitting.value = false
+    workspaceSubmitting.value = false
+    operationInFlight.value = false
   }
+}
+
+function detachOperationProgress() {
+  if (operationFinished.value) return
+  if (operationTask.value.operation === 'derive') deriveVisible.value = false
+  if (operationTask.value.operation === 'add_samples') {
+    addProductTaskDetached.value = true
+    addProductVisible.value = false
+  }
+  if (operationTask.value.operation === 'delete_product') deleteProductVisible.value = false
+}
+
+function handleOperationProgressBeforeClose(done) {
+  detachOperationProgress()
+  done()
+}
+
+function closeOperationProgress() {
+  detachOperationProgress()
+  operationProgressVisible.value = false
 }
 
 function openDeriveDialog(row) {
@@ -1455,7 +1493,7 @@ function openDeriveDialog(row) {
 
 async function submitDerive() {
   if (!deriveParent.value || !deriveForm.value.version || !deriveForm.value.name) return
-  const result = await runDatasetOperation('创建派生版本', () =>
+  const result = await runDatasetOperation('创建派生版本', 'derive', () =>
     deriveDatasetVersionTaskApi(deriveParent.value.id, {
       ...deriveForm.value,
       description: deriveForm.value.description || null,
@@ -1469,6 +1507,7 @@ async function submitDerive() {
 }
 
 async function openAddProductDialog(dataset, prefill = null) {
+  addProductTaskDetached.value = false
   workspaceSubmitting.value = true
   try {
     productDataset.value = await getDatasetVersionApi(dataset.id)
@@ -1525,6 +1564,10 @@ async function discardCurrentAnnotationStage() {
 }
 
 async function handleAddProductClosed() {
+  if (addProductOperationRunning.value || addProductTaskDetached.value) {
+    addProductTaskDetached.value = true
+    return
+  }
   await discardCurrentAnnotationStage()
   if (
     activeHandoff.value &&
@@ -1627,6 +1670,10 @@ async function openDeleteProductDialog(dataset) {
 
 async function submitAddProduct() {
   if (!productDataset.value || !annotationStage.value) return
+  if (operationInFlight.value) {
+    ElMessage.warning('已有数据集任务在后台运行，请等待当前任务完成后再添加样本')
+    return
+  }
   if (
     annotationSummary.value.pending ||
     annotationSummary.value.missing ||
@@ -1649,7 +1696,7 @@ async function submitAddProduct() {
       },
     })
   }
-  const result = await runDatasetOperation('添加人工标注样本并更新数据集', () =>
+  const result = await runDatasetOperation('添加人工标注样本并更新数据集', 'add_samples', () =>
     commitDatasetProductTaskApi(productDataset.value.id, payload),
   )
   if (!result?.dataset) {
@@ -1658,6 +1705,11 @@ async function submitAddProduct() {
         status: 'failed',
         error_message: '人工标注样品写入失败，请检查操作进度中的错误信息',
       }).catch(() => activeHandoff.value)
+    }
+    if (addProductTaskDetached.value) {
+      await discardCurrentAnnotationStage()
+      productFiles.value = { train: [], val: [], test: [] }
+      productFolderInfo.value = emptyProductFolderInfos()
     }
     return
   }
@@ -1675,6 +1727,8 @@ async function submitAddProduct() {
     activeHandoff.value = null
   }
   clearLocalAnnotationStage()
+  productFiles.value = { train: [], val: [], test: [] }
+  productFolderInfo.value = emptyProductFolderInfos()
   addProductVisible.value = false
   detail.value = result.dataset
   ElMessage.success(
@@ -1702,6 +1756,7 @@ async function deleteProductMapping(dataset, mapping) {
   try {
     const result = await runDatasetOperation(
       `删除商品 ${mapping.display_name || mapping.class_name}`,
+      'delete_product',
       () => deleteDatasetProductTaskApi(dataset.id, mapping.product_id, true),
     )
     if (!result?.dataset) return
@@ -1841,7 +1896,7 @@ async function deleteRow(row) {
   })
   if (!confirmed) return
 
-  const result = await runDatasetOperation(`删除草稿 ${row.version}`, () =>
+  const result = await runDatasetOperation(`删除草稿 ${row.version}`, 'delete_draft', () =>
     deleteDatasetVersionTaskApi(row.id),
   )
   if (!result) return
@@ -1850,9 +1905,8 @@ async function deleteRow(row) {
 }
 
 onBeforeUnmount(() => {
-  operationRunToken.value += 1
   const operationRunning = ['pending', 'running'].includes(operationTask.value.status)
-  if (!(operationRunning && operationTask.value.operation === 'add_product')) {
+  if (!(operationRunning && operationTask.value.operation === 'add_samples')) {
     void discardCurrentAnnotationStage()
   }
 })
@@ -2626,6 +2680,10 @@ onMounted(async () => {
 }
 
 .operation-error {
+  margin-top: 16px;
+}
+
+.operation-background-hint {
   margin-top: 16px;
 }
 

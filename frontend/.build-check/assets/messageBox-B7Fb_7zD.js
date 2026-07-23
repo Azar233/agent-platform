@@ -1,1 +1,0 @@
-import{_ as e}from"./index-Lhe1FD1p.js";function t(e){return e===`cancel`||e===`close`}async function n(n,r,i={}){try{return await e.confirm(n,r,i),!0}catch(e){if(t(e))return!1;throw e}}export{n as t};
