@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { resolveCustomerModeNavigation } from '@/utils/customerMode'
 
 const routes = [
   {
@@ -73,7 +74,7 @@ const routes = [
         path: 'checkout',
         name: 'CustomerCheckout',
         component: () => import('@/views/CustomerCheckoutPage.vue'),
-        meta: { title: '用户结算端', icon: 'ShoppingCart' },
+        meta: { title: '用户结算端', icon: 'ShoppingCart', customerModeAllowed: true },
       },
       {
         path: 'prices',
@@ -95,7 +96,7 @@ const routes = [
         path: 'checkout/payment',
         name: 'CustomerPayment',
         component: () => import('@/views/CustomerPaymentPage.vue'),
-        meta: { title: '确认付款' },
+        meta: { title: '确认付款', customerModeAllowed: true },
       },
     ],
   },
@@ -144,7 +145,9 @@ router.beforeEach((to) => {
     ? `${to.meta.title} - VisionPay Agent Platform`
     : 'VisionPay Agent Platform'
 
-  return resolveAuthNavigation(to)
+  const authNavigation = resolveAuthNavigation(to)
+  if (authNavigation !== true) return authNavigation
+  return resolveCustomerModeNavigation(to)
 })
 
 export default router
